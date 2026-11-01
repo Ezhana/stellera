@@ -32,8 +32,9 @@ jobs:
 
       # Python 与 uv 跟随后端自己的 .python-version（3.13）与 uv.lock。
       # setup-uv 同时把 uv 和对应 Python 放进 PATH，后端 target 直接 uv run 即可。
+      # 该 action 没有浮动 major tag（v10 不存在，只有 v10.x.y），因此固定到具体版本。
       - name: Setup Python and uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           python-version: "3.13"
           enable-cache: true
