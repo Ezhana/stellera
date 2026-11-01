@@ -1,43 +1,56 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { RouterLink } from 'vue-router'
+import { computed, ref, watch } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import UiBrandMark from '@/components/ui/UiBrandMark.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiChip from '@/components/ui/UiChip.vue'
 import UiIcon from '@/components/ui/UiIcon.vue'
-import type { IconName, ModuleView, ViewerProfile } from '@/models'
+import { CONSOLE_NAV, findNavGroupForRoute, type ViewerProfile } from '@/models'
+import { useAuthStore } from '@/stores/auth'
 
 interface ConsoleLayoutProps {
   viewer: ViewerProfile
-  modules: ModuleView[]
-  activeKey?: string
-  loggingOut?: boolean
 }
 
-const props = withDefaults(defineProps<ConsoleLayoutProps>(), {
-  activeKey: 'overview',
-  loggingOut: false,
-})
+defineProps<ConsoleLayoutProps>()
 
-defineEmits<{ logout: [] }>()
+const auth = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 
-interface NavItem {
-  key: string
-  label: string
-  icon: IconName
-  access?: string
+const loggingOut = ref(false)
+const expandedGroups = ref<Record<string, boolean>>(
+  Object.fromEntries(CONSOLE_NAV.map((group) => [group.key, true])),
+)
+
+const active = computed(() => findNavGroupForRoute(route.name))
+
+/** Keep the group that owns the current route open, even after a manual collapse. */
+watch(
+  () => active.value?.group.key,
+  (groupKey) => {
+    if (groupKey) expandedGroups.value = { ...expandedGroups.value, [groupKey]: true }
+  },
+)
+
+function toggleGroup(groupKey: string): void {
+  expandedGroups.value = {
+    ...expandedGroups.value,
+    [groupKey]: !expandedGroups.value[groupKey],
+  }
 }
 
-const navItems = computed<NavItem[]>(() => [
-  { key: 'overview', label: '总览', icon: 'overview' },
-  ...props.modules.map((module) => ({
-    key: module.key,
-    label: module.label,
-    icon: module.icon,
-    access: module.accessLabel,
-  })),
-])
+async function handleLogout(): Promise<void> {
+  if (loggingOut.value) return
+  loggingOut.value = true
+  try {
+    await auth.logout()
+  } finally {
+    await router.replace({ name: 'login' })
+    loggingOut.value = false
+  }
+}
 </script>
 
 <template>
@@ -47,32 +60,58 @@ const navItems = computed<NavItem[]>(() => [
         <UiBrandMark :size="36" />
         <div class="console-layout__brand-copy">
           <p class="console-layout__wordmark">STELLERA</p>
-          <p class="console-layout__submark">HUB CONSOLE</p>
+          <p class="console-layout__submark">FDE CONSOLE</p>
         </div>
       </div>
 
       <nav class="console-layout__nav" aria-label="主导航">
         <p class="console-layout__nav-title">工作台</p>
-        <ul class="console-layout__nav-list">
-          <li v-for="item in navItems" :key="item.key">
-            <RouterLink
-              v-if="item.key === 'overview'"
-              :to="{ name: 'console' }"
-              class="console-layout__nav-item"
-              :class="{ 'is-active': activeKey === 'overview' }"
-              :aria-current="activeKey === 'overview' ? 'page' : undefined"
-            >
-              <UiIcon :name="item.icon" :size="18" />
-              <span class="console-layout__nav-label">{{ item.label }}</span>
-            </RouterLink>
 
-            <span v-else class="console-layout__nav-item console-layout__nav-item--planned">
-              <UiIcon :name="item.icon" :size="18" />
-              <span class="console-layout__nav-label">{{ item.label }}</span>
-              <span v-if="item.access" class="console-layout__nav-meta">{{ item.access }}</span>
-            </span>
-          </li>
-        </ul>
+        <div
+          v-for="group in CONSOLE_NAV"
+          :key="group.key"
+          class="console-layout__nav-group"
+          :class="{ 'is-active-group': active?.group.key === group.key }"
+        >
+          <button
+            class="console-layout__nav-group-toggle"
+            type="button"
+            :aria-expanded="expandedGroups[group.key] ? 'true' : 'false'"
+            :aria-controls="`console-nav-${group.key}`"
+            @click="toggleGroup(group.key)"
+          >
+            <UiIcon :name="group.icon" :size="18" />
+            <span class="console-layout__nav-group-label">{{ group.label }}</span>
+            <UiIcon
+              class="console-layout__nav-group-chevron"
+              :class="{ 'is-open': expandedGroups[group.key] }"
+              name="chevron"
+              :size="14"
+            />
+          </button>
+
+          <ul
+            v-show="expandedGroups[group.key]"
+            :id="`console-nav-${group.key}`"
+            class="console-layout__nav-list"
+          >
+            <li v-for="leaf in group.children" :key="leaf.key">
+              <RouterLink
+                :to="{ name: leaf.routeName }"
+                class="console-layout__nav-item"
+                :class="{ 'is-active': active?.leaf.key === leaf.key }"
+                :aria-current="active?.leaf.key === leaf.key ? 'page' : undefined"
+              >
+                <UiIcon :name="leaf.icon" :size="17" />
+                <span class="console-layout__nav-label">{{ leaf.label }}</span>
+                <span v-if="leaf.meta" class="console-layout__nav-meta">
+                  <span class="console-layout__live-dot" aria-hidden="true" />
+                  {{ leaf.meta }}
+                </span>
+              </RouterLink>
+            </li>
+          </ul>
+        </div>
       </nav>
 
       <div class="console-layout__account">
@@ -96,7 +135,7 @@ const navItems = computed<NavItem[]>(() => [
           variant="ghost"
           size="sm"
           :loading="loggingOut"
-          @click="$emit('logout')"
+          @click="handleLogout"
         >
           <UiIcon name="logout" :size="16" />
           退出登录
@@ -143,6 +182,7 @@ const navItems = computed<NavItem[]>(() => [
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .console-layout__wordmark {
@@ -162,7 +202,7 @@ const navItems = computed<NavItem[]>(() => [
 }
 
 .console-layout__nav-title {
-  margin-bottom: var(--primitive-space-2);
+  margin-bottom: var(--primitive-space-3);
   color: var(--obsidian-tertiary-text);
   font-size: var(--font-size-caption);
   font-weight: var(--font-weight-strong);
@@ -170,10 +210,52 @@ const navItems = computed<NavItem[]>(() => [
   text-transform: uppercase;
 }
 
+.console-layout__nav-group + .console-layout__nav-group {
+  margin-top: var(--primitive-space-4);
+}
+
+.console-layout__nav-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--primitive-space-3);
+  width: 100%;
+  padding: var(--primitive-space-1) var(--primitive-space-2);
+  color: var(--obsidian-tertiary-text);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-small);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-strong);
+  letter-spacing: var(--font-letter-spacing-label);
+  text-align: left;
+  text-transform: uppercase;
+  transition: color var(--motion-duration-normal) var(--motion-easing-standard);
+}
+
+.console-layout__nav-group-toggle:hover,
+.console-layout__nav-group.is-active-group .console-layout__nav-group-toggle {
+  color: var(--color-fg-muted);
+}
+
+.console-layout__nav-group-label {
+  flex: 1;
+}
+
+.console-layout__nav-group-chevron {
+  transform: rotate(90deg);
+  transition: transform var(--motion-duration-normal) var(--motion-easing-standard);
+}
+
+.console-layout__nav-group-chevron.is-open {
+  transform: rotate(270deg);
+}
+
 .console-layout__nav-list {
   display: flex;
   flex-direction: column;
   gap: var(--primitive-space-1);
+  margin-top: var(--primitive-space-1);
 }
 
 .console-layout__nav-item {
@@ -181,7 +263,7 @@ const navItems = computed<NavItem[]>(() => [
   align-items: center;
   gap: var(--primitive-space-3);
   min-height: 40px;
-  padding: 8px 12px;
+  padding: 8px 12px 8px 14px;
   color: var(--color-fg-muted);
   border: var(--border-width-default) solid transparent;
   border-radius: var(--radius-control);
@@ -197,26 +279,18 @@ const navItems = computed<NavItem[]>(() => [
 .console-layout__nav-item:hover {
   color: var(--color-fg);
   background-color: var(--color-bg-subtle);
+  text-decoration: none;
 }
 
 .console-layout__nav-item.is-active {
   color: var(--color-fg-strong);
   background-color: var(--color-accent-subtle);
   border-color: transparent;
-  box-shadow: inset 1px 0 0 var(--color-accent);
+  box-shadow: inset 2px 0 0 var(--color-accent);
 }
 
 .console-layout__nav-item.is-active .ui-icon {
   color: var(--color-accent-hover);
-}
-
-.console-layout__nav-item--planned {
-  cursor: default;
-}
-
-.console-layout__nav-item--planned:hover {
-  background-color: transparent;
-  color: var(--color-fg-muted);
 }
 
 .console-layout__nav-label {
@@ -224,9 +298,21 @@ const navItems = computed<NavItem[]>(() => [
 }
 
 .console-layout__nav-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--primitive-space-1);
   color: var(--obsidian-tertiary-text);
   font-size: var(--font-size-caption);
   letter-spacing: 0.01em;
+}
+
+.console-layout__live-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  background-color: var(--color-success);
+  border-radius: var(--radius-pill);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 18%, transparent);
 }
 
 .console-layout__account {
@@ -301,9 +387,32 @@ const navItems = computed<NavItem[]>(() => [
   .console-layout__sidebar {
     position: static;
     height: auto;
-    gap: var(--primitive-space-5);
+    gap: var(--primitive-space-4);
+    padding: var(--primitive-space-5) var(--primitive-space-4);
     border-right: 0;
     border-bottom: var(--border-width-default) solid var(--color-border);
+  }
+
+  .console-layout__brand {
+    padding-bottom: var(--primitive-space-4);
+  }
+
+  .console-layout__nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--primitive-space-3);
+  }
+
+  .console-layout__nav-title {
+    display: none;
+  }
+
+  .console-layout__nav-group {
+    flex: 1 1 14rem;
+  }
+
+  .console-layout__nav-group + .console-layout__nav-group {
+    margin-top: 0;
   }
 
   .console-layout__nav-list {
@@ -316,7 +425,24 @@ const navItems = computed<NavItem[]>(() => [
   }
 
   .console-layout__account {
-    margin-top: var(--primitive-space-2);
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--primitive-space-3);
+    margin-top: var(--primitive-space-1);
+    padding-top: var(--primitive-space-4);
+  }
+
+  .console-layout__identity {
+    flex: 1 1 12rem;
+  }
+
+  .console-layout__roles {
+    display: none;
+  }
+
+  .console-layout__logout {
+    margin-left: auto;
   }
 
   .console-layout__main {

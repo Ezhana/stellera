@@ -1,22 +1,25 @@
-import type {
-  PermissionGroupView,
-  RoleView,
-  ViewerProfile,
-  ModuleAccess,
-  ModuleKey,
-} from '@/models'
-import { MODULE_CATALOG } from '@/models/modules'
+import type { HubCapabilities, PermissionGroupView, RoleView, ViewerProfile } from '@/models'
 
 import { actionOrder, describeActions, describeObject, groupOrder } from '../describe'
-import { permissionAllows } from '../permissions'
+import { permissionAllows, type PermissionLike } from '../permissions'
 import type { PermissionDto, UserDto } from './dto'
 
 const ROLE_META: Readonly<Record<string, { label: string; tone: RoleView['tone'] }>> = {
   admin: { label: '管理员', tone: 'accent' },
   operator: { label: '运营', tone: 'info' },
+  enterprise: { label: '企业', tone: 'accent' },
+  engineer: { label: '工程师', tone: 'success' },
   viewer: { label: '只读成员', tone: 'default' },
   authenticated: { label: '已认证', tone: 'default' },
 }
+
+/** Concrete probe paths for the FDE capabilities; the backend policies use the same prefixes. */
+const CAPABILITY_PROBES = {
+  publishOrder: { path: '/api/v1/fde/orders', method: 'POST' },
+  claimOrder: { path: '/api/v1/fde/orders/1/claim', method: 'POST' },
+  submitOrderLog: { path: '/api/v1/fde/orders/1/logs', method: 'POST' },
+  completeOrder: { path: '/api/v1/fde/orders/1/complete', method: 'POST' },
+} as const
 
 /** Map the backend user DTO into the stable viewer page model. */
 export function toViewerProfile(user: UserDto): ViewerProfile {
@@ -39,7 +42,7 @@ export function toViewerProfile(user: UserDto): ViewerProfile {
     roles,
     permissionGroups: toPermissionGroups(permissions),
     permissionCount: permissions.length,
-    moduleAccess: toModuleAccess(permissions),
+    capabilities: toCapabilities(permissions),
   }
 }
 
@@ -85,20 +88,29 @@ function toPermissionGroups(permissions: readonly PermissionDto[]): PermissionGr
   return result
 }
 
-function toModuleAccess(permissions: readonly PermissionDto[]): Record<ModuleKey, ModuleAccess> {
-  const access: Record<ModuleKey, ModuleAccess> = {
-    wallet: 'none',
-    orders: 'none',
-    plaza: 'none',
+function toCapabilities(permissions: readonly PermissionLike[]): HubCapabilities {
+  return {
+    publishOrder: permissionAllows(
+      permissions,
+      CAPABILITY_PROBES.publishOrder.path,
+      CAPABILITY_PROBES.publishOrder.method,
+    ),
+    claimOrder: permissionAllows(
+      permissions,
+      CAPABILITY_PROBES.claimOrder.path,
+      CAPABILITY_PROBES.claimOrder.method,
+    ),
+    submitOrderLog: permissionAllows(
+      permissions,
+      CAPABILITY_PROBES.submitOrderLog.path,
+      CAPABILITY_PROBES.submitOrderLog.method,
+    ),
+    completeOrder: permissionAllows(
+      permissions,
+      CAPABILITY_PROBES.completeOrder.path,
+      CAPABILITY_PROBES.completeOrder.method,
+    ),
   }
-
-  for (const module of MODULE_CATALOG) {
-    const canRead = permissionAllows(permissions, module.probePath, 'GET')
-    const canWrite = permissionAllows(permissions, module.probePath, 'POST')
-    access[module.key] = canWrite ? 'write' : canRead ? 'read' : 'none'
-  }
-
-  return access
 }
 
 function normalizeOptional(value: string | null | undefined): string | null {

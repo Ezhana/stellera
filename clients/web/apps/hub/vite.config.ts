@@ -11,6 +11,8 @@ const apiProxy = {
   '/api': {
     target: API_PROXY_TARGET,
     changeOrigin: true,
+    // 订单大厅使用 WebSocket 接收实时订单事件，开发代理必须升级连接。
+    ws: true,
   },
 }
 

@@ -2,13 +2,14 @@
 import UiBrandMark from '@/components/ui/UiBrandMark.vue'
 import UiChip from '@/components/ui/UiChip.vue'
 import UiIcon from '@/components/ui/UiIcon.vue'
-import { MODULE_CATALOG } from '@/models/modules'
 
 const capabilities = [
-  { icon: 'shield' as const, label: '统一身份与 RBAC 权限' },
-  { icon: 'key' as const, label: '会话与刷新令牌管理' },
-  { icon: 'overview' as const, label: '钱包 / 订单 / 广场模块' },
+  { icon: 'shield' as const, label: '第三方资金托管与交付保障' },
+  { icon: 'live' as const, label: 'FDE 订单实时大厅' },
+  { icon: 'logs' as const, label: '工作日志与交付过程留痕' },
 ]
+
+const modules = ['平台简介', '订单大厅', '我发布的']
 </script>
 
 <template>
@@ -19,13 +20,15 @@ const capabilities = [
           <UiBrandMark :size="42" />
           <div class="auth-layout__brand-copy">
             <p class="auth-layout__wordmark">STELLERA</p>
-            <p class="auth-layout__submark">HUB CONSOLE</p>
+            <p class="auth-layout__submark">FDE DELIVERY CONSOLE</p>
           </div>
         </div>
 
-        <p class="hub-eyebrow auth-layout__eyebrow">ACCESS PORTAL</p>
-        <h1 class="auth-layout__title">企业控制台</h1>
-        <p class="auth-layout__lead">统一管理钱包、订单与广场的业务入口。</p>
+        <p class="hub-eyebrow auth-layout__eyebrow">FORWARD DEPLOYED ENGINEER</p>
+        <h1 class="auth-layout__title">FDE 交付控制台</h1>
+        <p class="auth-layout__lead">
+          企业发布真实需求，前沿部署工程师接单交付，平台托管资金、保障履约。
+        </p>
 
         <ul class="auth-layout__capabilities" aria-label="控制台能力">
           <li v-for="capability in capabilities" :key="capability.label">
@@ -35,8 +38,8 @@ const capabilities = [
         </ul>
 
         <ul class="auth-layout__modules" aria-label="业务模块">
-          <li v-for="module in MODULE_CATALOG" :key="module.key">
-            <UiChip>{{ module.label }}</UiChip>
+          <li v-for="label in modules" :key="label">
+            <UiChip>{{ label }}</UiChip>
           </li>
         </ul>
 

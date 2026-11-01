@@ -20,6 +20,7 @@ from app.db import create_engine, create_session_factory
 from app.middleware.authentication import JWTAuthBackend
 from app.middleware.rbac import CasbinRBACMiddleware
 from app.rbac.enforcer import EnforcerGuard, build_enforcer, load_rbac_snapshot
+from app.realtime.hub import RealtimeHub
 from app.security.tokens import TokenService
 
 
@@ -30,6 +31,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     session_factory = create_session_factory(engine)
     app.state.engine = engine
     app.state.session_factory = session_factory
+    # FDE 订单实时推送连接中心；HTTP 端点与 WebSocket 端点都从 app.state 取。
+    app.state.realtime_hub = RealtimeHub()
     try:
         # 启动时把 PostgreSQL 中的 RBAC 全量投影到进程内 Casbin。
         async with session_factory() as session:
@@ -39,6 +42,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.enforcer_guard = guard
         yield
     finally:
+        # 先断开所有实时推送连接，再释放数据库引擎。
+        hub: RealtimeHub = app.state.realtime_hub
+        await hub.close_all()
+        app.state.realtime_hub = None
         await engine.dispose()
 
 

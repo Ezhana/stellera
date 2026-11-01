@@ -30,7 +30,12 @@ const viewer: ViewerProfile = {
   roles: [{ key: 'admin', label: '管理员', tone: 'accent' }],
   permissionGroups: [],
   permissionCount: 0,
-  moduleAccess: { wallet: 'write', orders: 'write', plaza: 'write' },
+  capabilities: {
+    publishOrder: true,
+    claimOrder: true,
+    submitOrderLog: true,
+    completeOrder: true,
+  },
 }
 
 const session: SessionView = {
@@ -51,7 +56,8 @@ async function mountLogin(query: Record<string, string> = {}): Promise<MountResu
     history: createMemoryHistory(),
     routes: [
       { path: '/login', name: 'login', component: EmptyView },
-      { path: '/console', name: 'console', component: EmptyView },
+      { path: '/intro', name: 'intro', component: EmptyView },
+      { path: '/fde/hall', name: 'fde-hall', component: EmptyView },
     ],
   })
   await router.push({ path: '/login', query })
@@ -121,22 +127,22 @@ describe('LoginPage', () => {
 
   it('logs in and follows a safe internal redirect', async () => {
     vi.mocked(authBff.login).mockResolvedValue(session)
-    const { wrapper, router } = await mountLogin({ redirect: '/console?tab=wallet' })
+    const { wrapper, router } = await mountLogin({ redirect: '/fde/hall?status=open' })
 
     await fillAndSubmit(wrapper, ' luna ', 'secret')
 
     expect(authBff.login).toHaveBeenCalledWith({ username: 'luna', password: 'secret' }, false)
     await flushPromises()
-    expect(router.currentRoute.value.fullPath).toBe('/console?tab=wallet')
+    expect(router.currentRoute.value.fullPath).toBe('/fde/hall?status=open')
   })
 
-  it('ignores an unsafe redirect target and falls back to /console', async () => {
+  it('ignores an unsafe redirect target and falls back to /intro', async () => {
     vi.mocked(authBff.login).mockResolvedValue(session)
     const { wrapper, router } = await mountLogin({ redirect: '//evil.example.com/steal' })
 
     await fillAndSubmit(wrapper, 'luna', 'secret')
 
     await flushPromises()
-    expect(router.currentRoute.value.fullPath).toBe('/console')
+    expect(router.currentRoute.value.fullPath).toBe('/intro')
   })
 })

@@ -9,7 +9,7 @@ const auth = useAuthStore()
 const router = useRouter()
 
 function goHome(): void {
-  void router.replace(auth.isAuthenticated ? { name: 'console' } : { name: 'login' })
+  void router.replace(auth.isAuthenticated ? { name: 'intro' } : { name: 'login' })
 }
 </script>
 
@@ -18,11 +18,9 @@ function goHome(): void {
     <UiBrandMark :size="64" title="STELLERA HUB" />
     <p class="not-found__code">404</p>
     <h1 class="not-found__title">页面不存在</h1>
-    <p class="not-found__message">你访问的页面可能已被移动或删除，请返回控制台继续操作。</p>
+    <p class="not-found__message">你访问的页面可能已被移动或删除，请返回工作台继续操作。</p>
     <div class="not-found__actions">
-      <UiButton @click="goHome">
-        {{ auth.isAuthenticated ? '返回控制台' : '前往登录' }}
-      </UiButton>
+      <UiButton @click="goHome">{{ auth.isAuthenticated ? '返回平台简介' : '前往登录' }}</UiButton>
     </div>
   </main>
 </template>

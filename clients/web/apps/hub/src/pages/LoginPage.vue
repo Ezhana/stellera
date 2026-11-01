@@ -60,7 +60,7 @@ function isSafeInternalPath(path: string): boolean {
 
 function resolveRedirect(raw: unknown): string {
   const value = Array.isArray(raw) ? raw[0] : raw
-  return typeof value === 'string' && isSafeInternalPath(value) ? value : '/console'
+  return typeof value === 'string' && isSafeInternalPath(value) ? value : '/intro'
 }
 
 /** Map the BFF's stable error codes to login-page copy; pages never inspect HTTP statuses. */
@@ -108,7 +108,7 @@ async function handleSubmit(): Promise<void> {
       <header class="login-card__header">
         <p class="login-card__eyebrow hub-eyebrow">SIGN IN</p>
         <h1 class="login-card__title">登录控制台</h1>
-        <p class="login-card__subtitle">使用企业账号访问 STELLERA HUB。</p>
+        <p class="login-card__subtitle">使用企业或工程师账号访问 FDE 交付控制台。</p>
       </header>
 
       <UiAlert

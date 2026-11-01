@@ -15,8 +15,8 @@ const viewerUser: UserDto = {
   is_active: true,
   roles: ['viewer'],
   permissions: [
-    { object: '/api/v1/wallet/*', action: '^GET$' },
-    { object: '/api/v1/orders', action: '^GET$' },
+    { object: '/api/v1/fde/orders', action: '^GET$' },
+    { object: '/api/v1/fde/orders/*', action: '^GET$' },
     { object: '/api/v1/auth/me', action: '^GET$' },
   ],
 }
@@ -80,11 +80,15 @@ describe('AuthBff', () => {
       permissionCount: 3,
     })
     expect(session.viewer.roles).toEqual([{ key: 'viewer', label: '只读成员', tone: 'default' }])
-    expect(session.viewer.moduleAccess).toEqual({ wallet: 'read', orders: 'read', plaza: 'none' })
+    expect(session.viewer.capabilities).toEqual({
+      publishOrder: false,
+      claimOrder: false,
+      submitOrderLog: false,
+      completeOrder: false,
+    })
     expect(session.viewer.permissionGroups.map((group) => group.label)).toEqual([
       '账户资料',
-      '钱包',
-      '订单',
+      'FDE 订单',
     ])
     expect(session.viewer.permissionGroups[1]?.actions).toEqual([{ key: 'GET', label: '查看' }])
     expect(tokenStore.value).toEqual({
@@ -92,6 +96,32 @@ describe('AuthBff', () => {
       remember: true,
     })
     expect(session.authenticatedAt).toEqual(expect.any(String))
+  })
+
+  it('derives FDE capabilities from enterprise and engineer policies', async () => {
+    vi.mocked(gateway.login).mockResolvedValueOnce({
+      access_token: 'access-1',
+      refresh_token: 'refresh-1',
+      user: {
+        ...viewerUser,
+        roles: ['enterprise', 'engineer'],
+        permissions: [
+          { object: '/api/v1/fde/orders', action: '^POST$' },
+          { object: '/api/v1/fde/orders/*/complete', action: '^POST$' },
+          { object: '/api/v1/fde/orders/*/claim', action: '^POST$' },
+          { object: '/api/v1/fde/orders/*/logs', action: '^POST$' },
+        ],
+      },
+    })
+
+    const session = await bff.login({ username: 'enterprise', password: 'secret' }, false)
+
+    expect(session.viewer.capabilities).toEqual({
+      publishOrder: true,
+      claimOrder: true,
+      submitOrderLog: true,
+      completeOrder: true,
+    })
   })
 
   it('supplies defaults for sparse backend payloads', async () => {
@@ -120,8 +150,25 @@ describe('AuthBff', () => {
       roles: [],
       permissionGroups: [],
       permissionCount: 0,
-      moduleAccess: { wallet: 'none', orders: 'none', plaza: 'none' },
+      capabilities: {
+        publishOrder: false,
+        claimOrder: false,
+        submitOrderLog: false,
+        completeOrder: false,
+      },
     })
+  })
+
+  it('exposes the current access token to other frontend BFFs only', async () => {
+    expect(bff.accessToken()).toBeNull()
+
+    await bff.login({ username: 'viewer', password: 'secret' }, false)
+
+    expect(bff.accessToken()).toBe('access-1')
+
+    await bff.logout()
+
+    expect(bff.accessToken()).toBeNull()
   })
 
   it('normalizes a 401 login into invalid-credentials', async () => {
@@ -192,14 +239,14 @@ describe('AuthBff', () => {
         ...viewerUser,
         roles: ['operator'],
         permissions: [
-          { object: '/api/v1/orders', action: '^(POST|PATCH)$' },
-          { object: '/api/v1/orders/*', action: '^(PATCH|PUT)$' },
+          { object: '/api/v1/fde/orders', action: '^(POST|PATCH)$' },
+          { object: '/api/v1/fde/orders/*', action: '^(PATCH|PUT)$' },
         ],
       },
     })
 
     const session = await bff.login({ username: 'operator', password: 'secret' }, false)
-    const orders = session.viewer.permissionGroups.find((group) => group.key === 'orders')
+    const orders = session.viewer.permissionGroups.find((group) => group.key === 'fde')
 
     expect(orders?.actions).toEqual([
       { key: 'POST', label: '创建' },

@@ -22,8 +22,10 @@ docker compose ps
 
 | 地址 | 说明 |
 | --- | --- |
-| <http://localhost:8080/login> | 登录页（中文 QuestUI 风格） |
-| <http://localhost:8080/console> | 登录后的控制台占位页 |
+| <http://localhost:8080/login> | 登录页（Obsidian 黑金风格） |
+| <http://localhost:8080/intro> | 平台简介（轮播图 + 叙事，登录后默认页） |
+| <http://localhost:8080/fde/hall> | FDE 订单大厅（WebSocket 实时更新） |
+| <http://localhost:8080/fde/published> | 我发布的（发布需求入口） |
 | <http://localhost:8000/docs> | FastAPI Swagger |
 | <http://localhost:8000/health/ready> | API + DB 就绪检查 |
 
@@ -31,11 +33,14 @@ docker compose ps
 
 | 账号 | 密码 | 角色 |
 | --- | --- | --- |
-| `admin` | `admin12345` | admin（全部 `/api/v1/*`） |
-| `operator` | `operator12345` | operator（订单/广场写） |
-| `viewer` | `viewer12345` | viewer（钱包/订单/广场只读） |
+| `admin` | `admin12345` | admin（全部 `/api/v1/*`，可代操作订单） |
+| `enterprise` | `enterprise12345` | enterprise（发布需求 / 完成 / 取消） |
+| `engineer` | `engineer12345` | engineer（认领订单 / 提交工作日志） |
+| `operator` | `operator12345` | operator（平台运营角色，可查看订单大厅） |
+| `viewer` | `viewer12345` | viewer（只读，可查看订单大厅） |
 
-`operator` / `viewer` 只在 `SEED_DEMO_USERS=true` 时创建。**这些弱口令只用于本机开发。**
+`operator` / `viewer` / `enterprise` / `engineer` 只在 `SEED_DEMO_USERS=true` 时创建；
+同一开关会幂等写入 10 条 FDE 演示订单（含工作日志）。**这些弱口令只用于本机开发。**
 
 ## 常用操作
 
@@ -81,7 +86,8 @@ pnpm install
 pnpm dev                      # Vite 默认 5173；被占用会自动换端口
 ```
 
-Vite 把 `/api` 代理到 `http://127.0.0.1:8000`，所以开发时不需要 CORS。
+Vite 把 `/api` 代理到 `http://127.0.0.1:8000`（含 WebSocket 升级），所以开发时不需要 CORS，
+订单大厅的实时连接也能直接工作。
 
 ## 镜像源限制
 

@@ -24,6 +24,10 @@ VIEWER_USERNAME = "viewer"
 VIEWER_PASSWORD = "viewer12345"
 OPERATOR_USERNAME = "operator"
 OPERATOR_PASSWORD = "operator12345"
+ENTERPRISE_USERNAME = "enterprise"
+ENTERPRISE_PASSWORD = "enterprise12345"
+ENGINEER_USERNAME = "engineer"
+ENGINEER_PASSWORD = "engineer12345"
 
 
 def build_test_settings(database_url: str) -> Settings:
@@ -45,6 +49,8 @@ def build_test_settings(database_url: str) -> Settings:
         seed_demo_users=True,
         seed_operator_password=OPERATOR_PASSWORD,
         seed_viewer_password=VIEWER_PASSWORD,
+        seed_enterprise_password=ENTERPRISE_PASSWORD,
+        seed_engineer_password=ENGINEER_PASSWORD,
     )
 
 

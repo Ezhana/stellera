@@ -14,7 +14,7 @@
 
 ### `services/python-hub-api` — Stellera Hub 后端（Nx 项目名 `python-hub-api`）
 
-FastAPI + PostgreSQL 的登录与 RBAC 服务，供 `clients/web/apps/hub` 消费。
+FastAPI + PostgreSQL 的登录、RBAC 与 FDE 订单服务（含 WebSocket 实时推送），供 `clients/web/apps/hub` 消费。
 
 ```text
 services/python-hub-api/
@@ -31,7 +31,8 @@ services/python-hub-api/
 - 本地开发：`uv sync` → `uv run alembic upgrade head` → `uv run python -m app.scripts.seed` → `uv run fastapi dev`。
 - 数据库与全栈编排：`infra/`（`docker compose -f ../../infra/compose.yaml up -d db` 或完整 `up --build`）。
 - 认证：Authlib 签发 JWT；授权：pycasbin 中间件；角色/权限/用户-角色存 PostgreSQL，启动时投影到 Casbin。
-- 设计取舍见 [`docs/adr/0001-auth-rbac.md`](../docs/adr/0001-auth-rbac.md)。
+- FDE 订单：发布 / 认领 / 工作日志 / 完成 / 取消 + 托管资金状态，详见服务 README 与 [`docs/adr/0003-fde-orders.md`](../docs/adr/0003-fde-orders.md)。
+- 认证与 RBAC 设计见 [`docs/adr/0001-auth-rbac.md`](../docs/adr/0001-auth-rbac.md)。
 
 ## 命名与结构
 

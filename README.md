@@ -4,8 +4,8 @@
 
 | Nx 项目 | 目录 | 说明 |
 | --- | --- | --- |
-| `web` | `clients/web` | Vue 3 + Vite 前端工作区，应用为 `apps/hub`（Obsidian 黑金登录页 + Console，含 BFF/页面模型层） |
-| `python-hub-api` | `services/python-hub-api` | FastAPI + PostgreSQL，Authlib JWT 登录与 pycasbin RBAC |
+| `web` | `clients/web` | Vue 3 + Vite 前端工作区，应用为 `apps/hub`（Obsidian 黑金 FDE 交付控制台：平台简介 + 实时订单大厅，含 BFF/页面模型层） |
+| `python-hub-api` | `services/python-hub-api` | FastAPI + PostgreSQL，Authlib JWT 登录、pycasbin RBAC 与 FDE 订单/实时推送 |
 
 本地全栈编排在 `infra/`（PostgreSQL + API + nginx 前端）。
 
@@ -22,10 +22,28 @@ docker compose -f infra/compose.yaml ps
 | 地址 | 说明 |
 | --- | --- |
 | <http://localhost:8080/login> | 登录页（中文黑金商务风 / Obsidian） |
+| <http://localhost:8080/intro> | 平台简介（轮播图 + 叙事；登录后的默认页） |
+| <http://localhost:8080/fde/hall> | FDE 订单大厅（WebSocket 实时更新） |
+| <http://localhost:8080/fde/published> | 我发布的（查看当前发布、发布新需求） |
 | <http://localhost:8000/docs> | Swagger |
 | <http://localhost:8000/health/ready> | API + DB 就绪检查 |
 
-默认账号见 `infra/.env.example`：`admin` / `admin12345`（另有 `operator`、`viewer` 演示账号）。这些弱口令只用于本机开发。
+默认账号见 `infra/.env.example`：`admin` / `admin12345`（管理员，可代操作全部订单）。
+`SEED_DEMO_USERS=true` 时另有企业演示账号 `enterprise` / `enterprise12345`、工程师演示账号
+`engineer` / `engineer12345`，以及 `operator`、`viewer`。这些弱口令只用于本机开发。
+
+## FDE 订单模块
+
+业务闭环：**企业发布需求 → 平台代收并托管资金 → 工程师接单交付（提交工作日志）→ 企业验收 → 平台结算**。
+
+- 左侧菜单为两级：`平台 → 平台简介`、`FDE 订单 → 订单大厅（实时）/ 我发布的`；钱包、广场等旧模块已暂时移除。
+- 订单大厅列表展示任务、行业、交付周期、价格、状态、托管状态与发布时间，支持状态/行业/关键词筛选。
+- 实时更新走 `WebSocket /api/v1/fde/ws`：创建、认领、日志、完成、取消都会广播
+  `order.created` / `order.updated`，断线自动重连，刷新列表兜底。
+- 后端 RBAC 在 `authenticated` 之上新增 `enterprise`（发布/完成/取消）与 `engineer`（认领/提交日志）角色；
+  未认证请求由 Casbin 中间件返回 401/403。
+- API 一览见 [`services/python-hub-api/README.md`](services/python-hub-api/README.md)，
+  取舍记录见 [`docs/adr/0003-fde-orders.md`](docs/adr/0003-fde-orders.md)。
 
 ## 本地开发（热更新）
 
@@ -86,7 +104,7 @@ clients/web/                  # 前端工作区：apps/hub、共享 ESLint/Prett
 services/python-hub-api/      # 后端服务：app/、casbin/、migrations/、tests/
 infra/                        # 本地 Docker 编排（前端 nginx 配置在 apps/hub）
 deploy/                       # 发布环境编排（staging/prod），与 infra 分工
-docs/adr/                     # 架构决策记录（0001 登录与 RBAC、0002 前端 BFF/页面模型）
+docs/adr/                     # 架构决策记录（0001 登录与 RBAC、0002 前端 BFF/页面模型、0003 FDE 订单）
 tools/                        # 仓库级维护工具（gen-api 等，按需创建）
 ```
 

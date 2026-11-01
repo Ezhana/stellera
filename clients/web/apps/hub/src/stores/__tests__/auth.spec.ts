@@ -25,14 +25,19 @@ const viewer: ViewerProfile = {
   roles: [{ key: 'admin', label: '管理员', tone: 'accent' }],
   permissionGroups: [
     {
-      key: 'wallet',
-      label: '钱包',
+      key: 'fde',
+      label: 'FDE 订单',
       actions: [{ key: 'GET', label: '查看' }],
-      rawObjects: ['/api/v1/wallet/*'],
+      rawObjects: ['/api/v1/fde/orders/*'],
     },
   ],
   permissionCount: 1,
-  moduleAccess: { wallet: 'read', orders: 'read', plaza: 'read' },
+  capabilities: {
+    publishOrder: true,
+    claimOrder: true,
+    submitOrderLog: true,
+    completeOrder: true,
+  },
 }
 
 const session: SessionView = {

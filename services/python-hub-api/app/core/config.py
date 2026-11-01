@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     seed_demo_users: bool = True
     seed_operator_password: str = "operator12345"
     seed_viewer_password: str = "viewer12345"
+    # FDE 模块的两个演示账号：企业发布方与接单工程师。
+    seed_enterprise_password: str = "enterprise12345"
+    seed_engineer_password: str = "engineer12345"
 
     @field_validator("cors_origins", mode="before")
     @classmethod

@@ -1,5 +1,3 @@
-import type { ModuleAccess, ModuleKey } from './modules'
-
 /** Tone names shared by chips and page models. */
 export type BadgeTone = 'default' | 'accent' | 'info' | 'success' | 'warning' | 'error'
 
@@ -25,6 +23,19 @@ export interface PermissionGroupView {
 export type ViewerStatus = 'active' | 'inactive'
 
 /**
+ * Capabilities the current viewer has on the FDE order module.
+ *
+ * Derived by the auth BFF from the raw Casbin permissions; pages only branch on these booleans and
+ * never parse policy paths themselves.
+ */
+export interface HubCapabilities {
+  publishOrder: boolean
+  claimOrder: boolean
+  submitOrderLog: boolean
+  completeOrder: boolean
+}
+
+/**
  * Stable viewer/page model.
  *
  * Pages and components consume this shape only. Backend DTO field names, nullable quirks and raw
@@ -42,7 +53,7 @@ export interface ViewerProfile {
   roles: RoleView[]
   permissionGroups: PermissionGroupView[]
   permissionCount: number
-  moduleAccess: Record<ModuleKey, ModuleAccess>
+  capabilities: HubCapabilities
 }
 
 /** Authenticated page model; tokens are deliberately not part of it. */

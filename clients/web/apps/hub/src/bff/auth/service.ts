@@ -22,6 +22,16 @@ export class AuthBff {
     private readonly tokenStore: TokenStore,
   ) {}
 
+  /**
+   * Current access token for other frontend BFF services (e.g. the orders gateway).
+   *
+   * Tokens still never reach pages or stores; this is the narrow port other BFFs use instead of
+   * reading browser storage directly. Returns `null` when there is no persisted session.
+   */
+  accessToken(): string | null {
+    return this.tokenStore.read()?.tokens.accessToken ?? null
+  }
+
   async login(credentials: LoginCredentials, remember: boolean): Promise<SessionView> {
     try {
       const dto = await this.gateway.login(credentials)

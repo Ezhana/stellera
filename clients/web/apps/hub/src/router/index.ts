@@ -16,7 +16,7 @@ declare module 'vue-router' {
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
-    redirect: '/console',
+    redirect: '/intro',
   },
   {
     path: '/login',
@@ -25,10 +25,28 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '登录', publicOnly: true },
   },
   {
+    // 平台简介：轮播图 + 叙事，作为登录后的默认落地页。
+    path: '/intro',
+    name: 'intro',
+    component: () => import('@/pages/PlatformIntroPage.vue'),
+    meta: { title: '平台简介', requiresAuth: true },
+  },
+  {
+    // 旧控制台入口保留为兼容跳转，避免历史链接 404。
     path: '/console',
-    name: 'console',
-    component: () => import('@/pages/ConsolePage.vue'),
-    meta: { title: '控制台', requiresAuth: true },
+    redirect: '/intro',
+  },
+  {
+    path: '/fde/hall',
+    name: 'fde-hall',
+    component: () => import('@/pages/fde/OrderHallPage.vue'),
+    meta: { title: '订单大厅', requiresAuth: true },
+  },
+  {
+    path: '/fde/published',
+    name: 'fde-published',
+    component: () => import('@/pages/fde/PublishedOrdersPage.vue'),
+    meta: { title: '我发布的', requiresAuth: true },
   },
   {
     path: '/:pathMatch(.*)*',
@@ -53,7 +71,7 @@ router.beforeEach(async (to) => {
   }
 
   if (to.meta.publicOnly && auth.isAuthenticated) {
-    return { name: 'console' }
+    return { name: 'intro' }
   }
 
   return true

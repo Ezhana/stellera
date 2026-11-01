@@ -26,16 +26,17 @@ services/python-hub-api/
 │   ├── main.py                 # create_app 工厂 + lifespan（建引擎、投影 Casbin）
 │   ├── db.py                   # async engine / session factory
 │   ├── core/config.py          # Settings（环境变量唯一入口）
-│   ├── models/                 # users / roles / permissions / user_roles / role_permissions / refresh_tokens
-│   ├── schemas/                # 请求/响应模型
+│   ├── models/                 # users / roles / permissions / refresh_tokens / fde_orders / fde_order_logs
+│   ├── schemas/                # 请求/响应模型（auth.py、fde.py）
 │   ├── security/               # TokenService（Authlib JWT）+ 密码哈希
 │   ├── rbac/                   # Casbin 模型投影、公开策略
+│   ├── realtime/hub.py         # FDE 订单 WebSocket 连接中心（app.state.realtime_hub）
 │   ├── middleware/             # JWTAuthBackend + CasbinRBACMiddleware
-│   ├── services/auth.py        # 登录 / 刷新旋转 / 登出 / me
-│   ├── api/v1/endpoints/       # auth.py、health.py
-│   └── scripts/seed.py         # 幂等种子数据（python -m app.scripts.seed）
+│   ├── services/               # auth.py（登录/刷新/me）、fde.py（订单状态机与托管资金）
+│   ├── api/v1/endpoints/       # auth.py、fde.py（含 WebSocket）、health.py
+│   └── scripts/seed.py         # 幂等种子数据（角色/权限/演示账号/FDE 演示订单）
 ├── casbin/model.conf           # 只放模型，policy 不落 CSV
-├── migrations/                 # Alembic（异步 env.py + 0001 初始迁移）
+├── migrations/                 # Alembic（异步 env.py + 0001 初始迁移 + 0002 FDE 订单）
 ├── scripts/entrypoint.sh       # 容器入口：migrate -> seed -> exec
 ├── tests/                      # SQLite + TestClient，不依赖 Docker/PG
 ├── alembic.ini
@@ -66,7 +67,9 @@ docker compose -f ../../infra/compose.yaml up -d db
 - 就绪探针：<http://127.0.0.1:8000/health/ready>
 
 默认账号（来自 `.env.example`，仅供本机开发）：`admin / admin12345`；
-`SEED_DEMO_USERS=true` 时额外创建 `operator / operator12345`、`viewer / viewer12345`。
+`SEED_DEMO_USERS=true` 时额外创建 `operator / operator12345`、`viewer / viewer12345`、
+`enterprise / enterprise12345`（企业（演示））与 `engineer / engineer12345`（工程师（演示）），
+并写入 10 条 FDE 演示订单（`FDE-DEMO-0001` … `FDE-DEMO-0010`）。
 
 ## 配置
 
@@ -87,8 +90,9 @@ docker compose -f ../../infra/compose.yaml up -d db
 | `CORS_ORIGINS` | 本机 5173/8080 | 逗号分隔 |
 | `CASBIN_MODEL_PATH` | `casbin/model.conf` | Casbin 模型文件 |
 | `SEED_ADMIN_USERNAME` / `SEED_ADMIN_PASSWORD` / `SEED_ADMIN_EMAIL` | `admin` / `admin12345` / `admin@example.com` | 管理员 |
-| `SEED_DEMO_USERS` | `true` | 是否创建 operator/viewer 演示账号 |
-| `SEED_OPERATOR_PASSWORD` / `SEED_VIEWER_PASSWORD` | `operator12345` / `viewer12345` | 演示账号密码 |
+| `SEED_DEMO_USERS` | `true` | 是否创建 operator/viewer/enterprise/engineer 演示账号与 FDE 演示订单 |
+| `SEED_OPERATOR_PASSWORD` / `SEED_VIEWER_PASSWORD` | `operator12345` / `viewer12345` | 运营/访客演示账号密码 |
+| `SEED_ENTERPRISE_PASSWORD` / `SEED_ENGINEER_PASSWORD` | `enterprise12345` / `engineer12345` | 企业/工程师演示账号密码 |
 
 ## API
 
@@ -99,6 +103,15 @@ docker compose -f ../../infra/compose.yaml up -d db
 | POST | `/api/v1/auth/refresh` | 公开（凭 refresh token） | 旋转 refresh token |
 | POST | `/api/v1/auth/logout` | Bearer | 吊销该用户全部 refresh token，204 |
 | GET | `/api/v1/auth/me` | Bearer | 当前用户、角色、Casbin 隐式权限 |
+| GET | `/api/v1/fde/orders` | Bearer | FDE 订单大厅，支持 `status` / `industry` / `q` / `page` / `page_size` |
+| GET | `/api/v1/fde/orders/mine` | Bearer | 我发布的 FDE 订单，可选 `status` |
+| GET | `/api/v1/fde/orders/{order_id}` | Bearer | FDE 订单详情（含 `logs`，最旧在前） |
+| POST | `/api/v1/fde/orders` | Bearer（enterprise/admin） | 发布需求，201，返回订单 |
+| POST | `/api/v1/fde/orders/{order_id}/claim` | Bearer（engineer/admin） | 工程师认领订单 |
+| POST | `/api/v1/fde/orders/{order_id}/logs` | Bearer（接单工程师/admin） | 提交工作日志，201 |
+| POST | `/api/v1/fde/orders/{order_id}/complete` | Bearer（publisher/admin） | 确认交付，托管资金 `released` |
+| POST | `/api/v1/fde/orders/{order_id}/cancel` | Bearer（publisher/admin） | 取消待认领订单，托管资金 `refunded` |
+| WS | `/api/v1/fde/ws?token=<access_token>` | Bearer（query token） | FDE 订单实时推送 |
 | GET | `/health` | 公开 | 存活探针 |
 | GET | `/health/ready` | 公开 | DB + Casbin 就绪探针 |
 
@@ -138,6 +151,61 @@ docker compose -f ../../infra/compose.yaml up -d db
 - 旧 refresh token 被重放时，**吊销该用户全部 refresh token**，前端收到 401 后清空会话；
 - logout 同样吊销全部 refresh token（access token 到期自然失效）。
 
+## FDE 订单模块
+
+企业发布需求（平台代收并托管资金）→ 工程师认领 → 工程师提交工作日志 → 企业确认交付并释放托管资金。
+
+订单状态机与资金托管：
+
+```text
+open --claim--> in_progress --complete--> completed
+  └── cancel --> cancelled
+escrow: held --complete--> released / --cancel--> refunded
+```
+
+- 订单 JSON 字段：`id/code/title/industry/description/delivery_days/price_cents/status/
+  escrow_status/publisher/engineer/work_log_count/created_at/updated_at/claimed_at/completed_at`；
+  `publisher` / `engineer` 为 `{id, display_name}`（`display_name` 取 `full_name`，为空时回退 `username`）；
+- 列表响应统一信封 `{items, total, page, page_size}`，按 `created_at desc, id desc` 排序；
+  `status` 只接受 `open/in_progress/completed/cancelled`，`page_size` 范围 1..100；
+- 单号格式 `FDE-<年份>-<4 位序号>`；演示订单固定为 `FDE-DEMO-0001` … `FDE-DEMO-0010`，
+  由 `SEED_DEMO_USERS=true` 时幂等写入（5 条 open、3 条 in_progress、2 条 completed，含 11 条工作日志）；
+- 业务错误：订单不存在 → 404；状态机不允许（已认领 / 状态不符 / 认领自己发布的订单）→ 409；
+  已认证但非发布者 / 非接单工程师 → 403；
+- 时间统一以 UTC 序列化为 RFC 3339（例如 `2026-11-01T06:20:00Z`）；
+- 实时推送：`WS /api/v1/fde/ws?token=<access_token>`（浏览器 WebSocket 无法带 Authorization 头，
+  令牌从 query 读取并由 `TokenService` 校验）。连接后先收 `{"type":"connected","server_time":"..."}`；
+  每次成功变更（create/claim/log/complete/cancel）向所有在线连接广播
+  `{"type":"order.created"|"order.updated","order":{...}}`，`order` 与 HTTP 反序列化结构完全一致
+  （claim / log / complete / cancel 都是 `order.updated`，带最新 `work_log_count`）；
+  令牌缺失或无效时以关闭码 `4401` 断开（服务端先完成握手再关闭，浏览器才能拿到
+  自定义关闭码；握手阶段直接拒绝只会得到 1006）；
+- 连接中心是单进程内存实现（挂在 `app.state.realtime_hub`），lifespan 关闭时统一断开。
+
+```json
+{
+  "type": "order.updated",
+  "order": {
+    "id": 1,
+    "code": "FDE-2026-0001",
+    "title": "医疗影像 AI 辅助诊断 PoC",
+    "industry": "医疗健康",
+    "description": "…",
+    "delivery_days": 21,
+    "price_cents": 8600000,
+    "status": "in_progress",
+    "escrow_status": "held",
+    "publisher": { "id": 4, "display_name": "企业（演示）" },
+    "engineer": { "id": 5, "display_name": "工程师（演示）" },
+    "work_log_count": 1,
+    "created_at": "2026-11-01T06:20:00Z",
+    "updated_at": "2026-11-01T07:10:00Z",
+    "claimed_at": "2026-11-01T07:00:00Z",
+    "completed_at": null
+  }
+}
+```
+
 ## RBAC（Casbin）
 
 `casbin/model.conf` 只放模型：`g(r.sub, p.sub) && keyMatch2(r.obj, p.obj) && regexMatch(r.act, p.act)`。
@@ -158,13 +226,15 @@ docker compose -f ../../infra/compose.yaml up -d db
 角色树与种子权限：
 
 ```text
-authenticated            所有登录用户的基线（/auth/me GET、/auth/logout POST）
-└── viewer               wallet/* GET、orders GET、orders/* GET、plaza/* GET
-    └── operator         orders POST/PATCH、orders/* PATCH/PUT、plaza/* POST/PUT/PATCH
-        └── admin        /api/v1/* 全方法（含未来的 /api/v1/admin/*）
+authenticated            所有登录用户的基线（/auth/me GET、/auth/logout POST、fde/orders* GET）
+├── viewer               只继承 authenticated 的只读能力（wallet/plaza/旧 orders 已下线）
+│   └── operator         同上（旧模块的运营写权限已随模块删除）
+│       └── admin        /api/v1/* 全方法（含 /api/v1/admin/* 与 FDE 全部操作）
+├── enterprise           fde/orders POST、fde/orders/*/complete、fde/orders/*/cancel
+└── engineer             fde/orders/*/claim、fde/orders/*/logs
 ```
 
-权限按模块路径收窄，viewer 的只读权限不会意外放开 `/api/v1/admin/*`；需要新增模块时，
+权限按模块路径收窄，viewer / operator 只能读取当前上线模块；需要新增模块时，
 在 `app/scripts/seed.py` 的 `PERMISSION_DEFINITIONS` 里补对应路径即可。
 
 中间件顺序（外 → 内）：`CORS` → `AuthenticationMiddleware` → `CasbinRBACMiddleware`。
@@ -178,7 +248,9 @@ uv run alembic downgrade -1        # 回滚一步
 uv run alembic revision -m "msg"   # 新建迁移
 ```
 
-模型在 `app/models/`，初始迁移为 `migrations/versions/0001_initial_schema.py`。
+模型在 `app/models/`，初始迁移为 `migrations/versions/0001_initial_schema.py`，
+FDE 订单表在 `migrations/versions/0002_fde_orders.py`（`fde_orders` + `fde_order_logs`，
+FK 指向 `users`，单号唯一，`status` / `publisher_id` / `created_at` 建索引）。
 生产数据库是 PostgreSQL；测试用临时 SQLite（`sqlite+aiosqlite`），不依赖 Docker/PG。
 
 ## 质量检查
@@ -192,7 +264,9 @@ uv run pytest
 ```
 
 测试覆盖：密码哈希、JWT 签发/过期/篡改/类型混用、登录/刷新旋转/重放吊销/登出、
-401 与 403 区分、角色继承矩阵、路径归一化、OPTIONS 放行、健康检查、种子幂等。
+401 与 403 区分、角色继承矩阵、路径归一化、OPTIONS 放行、健康检查、种子幂等，
+以及 FDE 订单全流程（大厅过滤/分页、发布、认领、工作日志、完成/取消、我发布的、
+管理员跨角色操作、WebSocket 鉴权与 `order.created` / `order.updated` 推送）。
 
 也可以走 Nx（从仓库根目录）：
 
@@ -226,6 +300,7 @@ docker build --build-arg PYTHON_IMAGE=registry.example.com/python:3.13-slim .
 
 ## 与仓库其他部分的关系
 
-- 前端在 `clients/web`，通过 `/api/v1/auth/*` 与 `/health/ready` 对接；
+- 前端在 `clients/web`，通过 `/api/v1/auth/*`、`/api/v1/fde/*`（含 `/api/v1/fde/ws` 实时推送）
+  与 `/health/ready` 对接；
 - `infra/` 负责本地 Docker 编排，`deploy/` 负责发布环境；
 - 本服务是 Nx 项目 `python-hub-api`，根 CI 用 `nx affected` 跑 lint/test/build/typecheck。
