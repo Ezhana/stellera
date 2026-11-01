@@ -10,6 +10,7 @@ import UiCard from '@/components/ui/UiCard.vue'
 import UiCheckbox from '@/components/ui/UiCheckbox.vue'
 import UiIcon from '@/components/ui/UiIcon.vue'
 import UiInput from '@/components/ui/UiInput.vue'
+import { DEMO_ACCOUNTS, type DemoAccount } from '@/config/demoAccounts'
 import AuthLayout from '@/layouts/AuthLayout.vue'
 import { useAuthStore } from '@/stores/auth'
 
@@ -100,6 +101,15 @@ async function handleSubmit(): Promise<void> {
     submitting.value = false
   }
 }
+
+/** 一键填入测试环境演示账号，并清空上一次提交留下的校验错误。 */
+function fillDemoAccount(account: DemoAccount): void {
+  username.value = account.username
+  password.value = account.password
+  fieldErrors.username = undefined
+  fieldErrors.password = undefined
+  formError.value = ''
+}
 </script>
 
 <template>
@@ -167,6 +177,30 @@ async function handleSubmit(): Promise<void> {
           {{ submitting ? '正在验证…' : '登录' }}
         </UiButton>
       </form>
+
+      <section class="login-card__demo" aria-labelledby="login-demo-title">
+        <div class="login-card__demo-header">
+          <h2 id="login-demo-title" class="login-card__demo-title">测试环境演示账号</h2>
+          <p class="login-card__demo-hint">点击填入 · 仅测试环境</p>
+        </div>
+        <ul class="login-card__demo-list">
+          <li v-for="account in DEMO_ACCOUNTS" :key="account.username">
+            <button
+              class="login-card__demo-account"
+              type="button"
+              :data-demo-account="account.username"
+              :aria-label="`填入演示账号：${account.role}（${account.scope}），用户名 ${account.username}，密码 ${account.password}`"
+              :title="`${account.role}（${account.scope}）：${account.username} / ${account.password}`"
+              :disabled="submitting"
+              @click="fillDemoAccount(account)"
+            >
+              <span class="login-card__demo-role">{{ account.role }}</span>
+              <span class="login-card__demo-username">{{ account.username }}</span>
+              <span class="login-card__demo-password">{{ account.password }}</span>
+            </button>
+          </li>
+        </ul>
+      </section>
 
       <p class="login-card__footnote">账号由管理员分配；如需开通权限，请联系 IT 管理员。</p>
     </UiCard>
@@ -239,11 +273,99 @@ async function handleSubmit(): Promise<void> {
   margin-top: var(--primitive-space-1);
 }
 
+/* 测试环境演示账号：低频辅助区块，用极细分割线与表单主体区分。 */
+.login-card__demo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--primitive-space-3);
+  padding-top: var(--primitive-space-4);
+  border-top: var(--border-width-default) solid var(--color-border-subtle);
+}
+
+.login-card__demo-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--primitive-space-1) var(--primitive-space-2);
+}
+
+.login-card__demo-title {
+  color: var(--color-fg-strong);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-medium);
+}
+
+.login-card__demo-hint {
+  color: var(--color-fg-muted);
+  font-size: var(--font-size-caption);
+}
+
+.login-card__demo-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: var(--primitive-space-2);
+}
+
+.login-card__demo-account {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: var(--primitive-space-2) var(--primitive-space-3);
+  text-align: left;
+  background: var(--obsidian-surface-glass);
+  border: var(--border-width-default) solid var(--color-border);
+  border-radius: var(--radius-control);
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-easing-standard),
+    border-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.login-card__demo-account:hover:not(:disabled) {
+  background: var(--obsidian-accent-soft-hover);
+  border-color: var(--color-accent-border);
+}
+
+.login-card__demo-account:disabled {
+  opacity: 0.6;
+}
+
+.login-card__demo-role {
+  color: var(--obsidian-gold-text);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.2;
+}
+
+.login-card__demo-username {
+  color: var(--color-fg);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-code);
+  line-height: 1.2;
+}
+
+.login-card__demo-password {
+  color: var(--color-fg-muted);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-code);
+  line-height: 1.2;
+}
+
 .login-card__footnote {
   padding-top: var(--primitive-space-4);
   border-top: var(--border-width-default) solid var(--color-border-subtle);
   color: var(--obsidian-tertiary-text);
   font-size: var(--font-size-caption);
   line-height: var(--font-line-height-caption);
+}
+
+/* 移动端：卡片至少两列，用户名/密码保持单行可读。 */
+@media (max-width: 480px) {
+  .login-card__demo-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>

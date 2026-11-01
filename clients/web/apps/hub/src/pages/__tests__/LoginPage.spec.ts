@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { authBff } from '@/bff/auth'
 import { BffError } from '@/bff/errors'
+import { DEMO_ACCOUNTS } from '@/config/demoAccounts'
 import type { SessionView, ViewerProfile } from '@/models'
 import LoginPage from '@/pages/LoginPage.vue'
 
@@ -144,5 +145,69 @@ describe('LoginPage', () => {
 
     await flushPromises()
     expect(router.currentRoute.value.fullPath).toBe('/intro')
+  })
+
+  it('lists every demo account with its plaintext password', async () => {
+    const { wrapper } = await mountLogin()
+
+    expect(wrapper.text()).toContain('测试环境演示账号')
+    expect(wrapper.text()).toContain('点击填入')
+    expect(wrapper.findAll('[data-demo-account]')).toHaveLength(DEMO_ACCOUNTS.length)
+
+    for (const account of DEMO_ACCOUNTS) {
+      const card = wrapper.find(`[data-demo-account="${account.username}"]`)
+      expect(card.exists()).toBe(true)
+      expect(card.text()).toContain(account.role)
+      expect(card.text()).toContain(account.username)
+      expect(card.text()).toContain(account.password)
+      expect(card.attributes('title')).toContain(account.password)
+    }
+  })
+
+  it('fills the form from a demo account and submits those credentials', async () => {
+    vi.mocked(authBff.login).mockResolvedValue(session)
+    const { wrapper, router } = await mountLogin()
+
+    await fillAndSubmit(wrapper)
+    expect(wrapper.text()).toContain('请输入用户名')
+    expect(wrapper.text()).toContain('请输入密码')
+
+    const account = DEMO_ACCOUNTS[1]!
+    await wrapper.find(`[data-demo-account="${account.username}"]`).trigger('click')
+    await flushPromises()
+
+    expect((wrapper.find('input[name="username"]').element as HTMLInputElement).value).toBe(
+      account.username,
+    )
+    expect((wrapper.find('input[name="password"]').element as HTMLInputElement).value).toBe(
+      account.password,
+    )
+    expect(wrapper.text()).not.toContain('请输入用户名')
+    expect(wrapper.text()).not.toContain('请输入密码')
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(authBff.login).toHaveBeenCalledWith(
+      { username: account.username, password: account.password },
+      false,
+    )
+    expect(router.currentRoute.value.name).toBe('intro')
+  })
+
+  it('clears a previous login error when a demo account is picked', async () => {
+    vi.mocked(authBff.login).mockRejectedValue(new BffError('invalid-credentials', 'bad admin'))
+    const { wrapper } = await mountLogin()
+
+    await fillAndSubmit(wrapper, 'luna', 'wrong-password')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true)
+
+    await wrapper.find(`[data-demo-account="${DEMO_ACCOUNTS[0]!.username}"]`).trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect((wrapper.find('input[name="username"]').element as HTMLInputElement).value).toBe(
+      DEMO_ACCOUNTS[0]!.username,
+    )
   })
 })
