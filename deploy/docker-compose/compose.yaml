@@ -1,0 +1,136 @@
+# Stellera Hub 测试环境（staging）Docker Compose 编排。
+#
+# 与 infra/compose.yaml（本地开发/演示）的分工：
+#   - 这里只服务测试环境：对外入口是 web 的 ${WEB_PORT}；db 不映射宿主机端口；
+#     api 默认只绑 127.0.0.1，避免 Swagger/API 直接暴露到公网；
+#   - 镜像带发布版本 tag（${RELEASE_VERSION}），由 deploy/scripts/deploy.sh 注入；
+#   - APP_ENV=staging、DEBUG=false，JWT_SECRET 必须由 deploy/env/<env>.env 提供真实值；
+#   - 按测试需求保留弱口令演示账号与 10 条 FDE 演示订单（生产环境必须改掉）。
+#
+# 不要直接 `docker compose up`：先准备环境变量并统一走脚本，脚本负责构建、备份、
+# 等待健康、冒烟测试和发布状态记录。
+#
+#   deploy/scripts/init-env.sh --env staging   # 首次：生成 deploy/env/staging.env
+#   deploy/scripts/deploy.sh --env staging     # 日常发布
+#
+# 所有变量来自 deploy/env/<env>.env（模板见 deploy/env/staging.env.example）。
+
+name: ${COMPOSE_PROJECT_NAME:-stellera-hub-staging}
+
+# 限制容器日志占用，避免测试机磁盘被日志写满；保留 3 个 10MB 文件。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: ${POSTGRES_IMAGE:-postgres:18}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hub}
+      # 没有密码直接拒绝启动：首次部署请先跑 init-env.sh。
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 未设置，请先运行 deploy/scripts/init-env.sh}
+      POSTGRES_DB: ${POSTGRES_DB:-hub}
+      TZ: UTC
+    # 刻意不映射宿主机端口：数据库只允许 compose 网络内的 api 访问。
+    # 需要在测试机上排查时：
+    #   docker compose --env-file deploy/env/staging.env -f deploy/docker-compose/compose.yaml exec db \
+    #     sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+    volumes:
+      # PostgreSQL 18 官方镜像的 PGDATA 是 /var/lib/postgresql/18/docker，
+      # 挂载父目录才能持久化；17 及更早版本的 data 子目录也在其中。
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      # $$ 由 Compose 保留给容器内 shell 展开。
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    logging: *default-logging
+    stop_grace_period: 30s
+
+  api:
+    image: ${IMAGE_PREFIX:-stellera}-hub-api:${RELEASE_VERSION:-local}
+    build:
+      # 构建上下文是服务目录；镜像由服务自带 Dockerfile 生成。
+      context: ../../services/python-hub-api
+      args:
+        # 内网无法直连 Docker Hub / ghcr.io 时，在 env 里换成镜像代理地址。
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.13-slim}
+        UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:latest}
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-staging}
+      DEBUG: ${DEBUG:-false}
+      # 容器内通过服务名 db 访问 PostgreSQL；密码必须保持 URL 安全字符
+      # （init-env.sh 生成的是十六进制串，见 README「密码与 URL」）。
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-hub}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-hub}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ISSUER: ${JWT_ISSUER:-stellera-hub}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-stellera-hub-web}
+      ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-900}
+      REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-604800}
+      # 同源部署（浏览器访问 web 的 /api 反代）其实不需要 CORS，
+      # 这里只放开测试入口，避免误配置成 *。
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      DOCS_ENABLED: ${DOCS_ENABLED:-false}
+      SEED_ADMIN_USERNAME: ${SEED_ADMIN_USERNAME:-admin}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-admin12345}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@example.com}
+      SEED_DEMO_USERS: ${SEED_DEMO_USERS:-true}
+      SEED_OPERATOR_PASSWORD: ${SEED_OPERATOR_PASSWORD:-operator12345}
+      SEED_VIEWER_PASSWORD: ${SEED_VIEWER_PASSWORD:-viewer12345}
+      SEED_ENTERPRISE_PASSWORD: ${SEED_ENTERPRISE_PASSWORD:-enterprise12345}
+      SEED_ENGINEER_PASSWORD: ${SEED_ENGINEER_PASSWORD:-engineer12345}
+    ports:
+      # 默认只绑本机回环，便于 SSH 隧道调试；确需外部直连时把 API_BIND 改成 0.0.0.0。
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # 与镜像 HEALTHCHECK 一致：/health/ready 会检查 DB 与 Casbin。
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *default-logging
+    stop_grace_period: 20s
+
+  web:
+    image: ${IMAGE_PREFIX:-stellera}-hub-web:${RELEASE_VERSION:-local}
+    build:
+      # 前端构建上下文是 pnpm workspace 根（clients/web），不是 apps/hub。
+      context: ../../clients/web
+      dockerfile: apps/hub/Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
+        NGINX_IMAGE: ${NGINX_IMAGE:-nginx:1.29-alpine}
+    restart: unless-stopped
+    ports:
+      # 测试环境唯一对外开放的入口：http://<host>:${WEB_PORT}
+      - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    logging: *default-logging
+    stop_grace_period: 10s
+
+volumes:
+  pgdata:

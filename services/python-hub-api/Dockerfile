@@ -1,9 +1,15 @@
 # 允许通过 build arg 指向镜像代理（例如内网 registry），默认仍是官方镜像。
-# infra/compose.yaml 的 api.build.args 会传 PYTHON_IMAGE。
+# infra/compose.yaml 的 api.build.args 会传 PYTHON_IMAGE；deploy/ 的测试环境编排
+# 还会传 UV_IMAGE，方便 ghcr.io 不可直连的测试机。
+#
+# uv 镜像单独声明成命名 stage：BuildKit 不支持 `COPY --from=${ARG}` 的变量展开，
+# 先 `FROM ${UV_IMAGE} AS uv` 再 `COPY --from=uv` 是官方 workaround。
 ARG PYTHON_IMAGE=python:3.13-slim
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:latest
+FROM ${UV_IMAGE} AS uv
 FROM ${PYTHON_IMAGE}
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=uv /uv /uvx /bin/
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \

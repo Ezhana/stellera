@@ -84,3 +84,10 @@ build/
 # 所以本文件不为它们写任何忽略规则。
 # 同理，deploy/ 下的环境清单模板属于需要提交的部署描述，
 # 不能因为全局的 build/、target/、bin/ 模式而顺手把 deploy/ 整个忽略掉。
+
+# ---------- 部署（deploy/）----------
+# 真实部署变量含数据库密码与 JWT_SECRET，只提交 *.example 模板；
+# .state/ 保存发布版本、数据库备份等主机本地数据，不随仓库分发。
+deploy/env/*.env
+!deploy/env/*.env.example
+deploy/.state/

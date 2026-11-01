@@ -32,6 +32,21 @@ docker compose -f infra/compose.yaml ps
 `SEED_DEMO_USERS=true` 时另有企业演示账号 `enterprise` / `enterprise12345`、工程师演示账号
 `engineer` / `engineer12345`，以及 `operator`、`viewer`。这些弱口令只用于本机开发。
 
+## 部署到测试环境（Docker only）
+
+测试环境用 `deploy/` 下的编排与脚本：在一台装了 Docker 的机器上 `git pull` 后一键完成
+构建、备份、启动、健康检查与回滚，不依赖 Kubernetes / Helm / 私有镜像仓库。
+
+```bash
+git pull
+deploy/scripts/init-env.sh --env staging        # 首次：生成 deploy/env/staging.env
+deploy/scripts/deploy.sh --env staging          # 构建 + 发布 + 冒烟测试
+```
+
+默认入口 `http://<测试机>:8080`，登录页内置「测试环境演示账号」可一键填充；
+发布前自动备份数据库到 `deploy/.state/backups`，回滚用 `deploy/scripts/rollback.sh --env staging`。
+完整说明（配置项、回滚、备份恢复、镜像代理、故障排查）见 [`deploy/README.md`](deploy/README.md)。
+
 ## FDE 订单模块
 
 业务闭环：**企业发布需求 → 平台代收并托管资金 → 工程师接单交付（提交工作日志）→ 企业验收 → 平台结算**。
