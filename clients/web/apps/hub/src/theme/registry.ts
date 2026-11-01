@@ -1,19 +1,18 @@
-import { defaultThemeDefinition } from '@ezhana/design-tokens'
-import { theme as quest } from '@ezhana/design-theme-quest'
+import { theme as obsidian } from '@ezhana/design-theme-obsidian'
 import { defineThemeRegistry } from '@ezhana/theme'
 
 /**
- * Theme registry for this app.
+ * Theme registry for the hub app.
  *
- * Every theme package exports a frozen `ThemeDefinition`. `defineThemeRegistry` validates the set
- * (unique ids, non-empty labels, valid mode lists) and freezes the result. Themes may support a
- * subset of the app's color modes; pass `themeModes: themeRegistry.themeModes` to the theme manager
- * when you add such a theme. The registry is the single source of truth for the theme switcher and
- * the theme manager.
+ * STELLERA HUB uses Obsidian, the template's Obsidian & Gold business identity: 24K gold on warm
+ * near-black obsidian with Inter body copy and Playfair Display headings. The registry contains Obsidian only, so it is both the default and the
+ * single available theme. There is no theme switcher UI; `data-theme="obsidian"` is already present on
+ * `<html>` in index.html, and the manager keeps it in sync.
  *
- * To add a theme: install its package and add its `theme` export to this array.
+ * To add a theme: install its package, add its `theme` export to this array, and pass
+ * `themeModes: themeRegistry.themeModes` to the manager (see `src/theme/manager.ts`).
  */
-export const themeRegistry = defineThemeRegistry([defaultThemeDefinition, quest])
+export const themeRegistry = defineThemeRegistry([obsidian])
 
 /** Theme ids available in this app, derived from the registry. */
 export type AppTheme = (typeof themeRegistry.themes)[number]

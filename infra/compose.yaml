@@ -1,0 +1,99 @@
+# Stellera Hub — 本地开发/演示用 Docker Compose。
+#
+# 全部变量来自同目录的 .env（由 .env.example 复制而来，不提交）：
+#   cp .env.example .env
+#
+# 启动：
+#   docker compose -f infra/compose.yaml up --build -d
+#
+# 只起数据库（配合本地 uv / pnpm 开发）：
+#   docker compose -f infra/compose.yaml up -d db
+name: stellera-hub
+
+services:
+  db:
+    image: ${POSTGRES_IMAGE:-postgres:18}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hub_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-hub}
+      TZ: UTC
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # PostgreSQL 18 官方镜像的 PGDATA 是 /var/lib/postgresql/18/docker，
+      # 挂载父目录才能持久化；17 及更早版本的 data 子目录也在其中。
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      # $$ 由 Compose 保留给容器内 shell 展开
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  api:
+    build:
+      context: ../services/python-hub-api
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.13-slim}
+    restart: unless-stopped
+    environment:
+      APP_ENV: development
+      DEBUG: "true"
+      # 容器内通过服务名 db 访问 PostgreSQL
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-hub}:${POSTGRES_PASSWORD:-hub_dev_password}@db:5432/${POSTGRES_DB:-hub}
+      JWT_SECRET: ${JWT_SECRET:-local-dev-only-change-me-32-characters-min}
+      JWT_ISSUER: stellera-hub
+      JWT_AUDIENCE: stellera-hub-web
+      ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-900}
+      REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-604800}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080}
+      DOCS_ENABLED: ${DOCS_ENABLED:-true}
+      SEED_ADMIN_USERNAME: ${SEED_ADMIN_USERNAME:-admin}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-admin12345}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@example.com}
+      SEED_DEMO_USERS: ${SEED_DEMO_USERS:-true}
+      SEED_OPERATOR_PASSWORD: ${SEED_OPERATOR_PASSWORD:-operator12345}
+      SEED_VIEWER_PASSWORD: ${SEED_VIEWER_PASSWORD:-viewer12345}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 25s
+
+  web:
+    build:
+      context: ../clients/web
+      dockerfile: apps/hub/Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
+        NGINX_IMAGE: ${NGINX_IMAGE:-nginx:1.29-alpine}
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  pgdata:

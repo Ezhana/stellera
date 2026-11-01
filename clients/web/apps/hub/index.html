@@ -1,30 +1,14 @@
 <!doctype html>
-<html lang="">
+<html lang="zh-CN" data-theme="obsidian">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" href="/favicon.ico" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="alternate icon" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>hub</title>
-    <script>
-      ;(function () {
-        var root = document.documentElement
-        var stored = null
-        try {
-          stored = JSON.parse(localStorage.getItem('ezhana-theme') || 'null')
-        } catch (error) {
-          stored = null
-        }
-        root.setAttribute(
-          'data-theme',
-          (stored && typeof stored.theme === 'string' && stored.theme) || 'default',
-        )
-        if (stored && (stored.mode === 'light' || stored.mode === 'dark')) {
-          root.setAttribute('data-color-mode', stored.mode)
-        } else {
-          root.removeAttribute('data-color-mode')
-        }
-      })()
-    </script>
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#070606" />
+    <meta name="description" content="STELLERA HUB 企业控制台：钱包、订单与广场的统一管理入口。" />
+    <title>STELLERA HUB · 企业控制台</title>
   </head>
   <body>
     <div id="app"></div>

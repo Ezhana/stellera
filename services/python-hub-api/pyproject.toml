@@ -1,0 +1,101 @@
+[project]
+name = "hub-api"
+version = "0.1.0"
+description = "Stellera Hub API: FastAPI + PostgreSQL + Authlib JWT + pycasbin RBAC"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "fastapi[standard]>=0.141.1",
+    "pydantic-settings>=2.15.0",
+    "sqlalchemy[asyncio]>=2.0.44",
+    "asyncpg>=0.30.0",
+    "alembic>=1.16.0",
+    # Authlib 1.9 起 authlib.jose 被标记为 deprecated（1.x 内仍兼容），
+    # JWT 逻辑集中在 app/security/tokens.py，便于后续迁移到 joserfc。
+    "authlib>=1.9,<2",
+    "pwdlib[argon2]>=0.3.0",
+    # 只用 pycasbin 本体；不用 fastapi-casbin-auth（它会硬锁旧版 FastAPI/Starlette）。
+    "pycasbin>=2.8,<3",
+]
+
+[dependency-groups]
+dev = [
+    "aiosqlite>=0.21.0",
+    # Starlette 1.6 起 TestClient 推荐 httpx2；避免 httpx 的弃用警告。
+    "httpx2>=2.10.0",
+    "pre-commit>=4.6.2",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.3",
+    "ty>=0.0.72",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# 模型文件放在服务根 casbin/（与 ADR/计划一致），同时打进 wheel，
+# 这样即便以 wheel 方式安装也能找到 model.conf。
+"casbin/model.conf" = "app/rbac/model.conf"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/app",
+    "/casbin",
+    "/migrations",
+    "/scripts",
+    "/tests",
+    "/alembic.ini",
+    "/Dockerfile",
+    "/pyproject.toml",
+    "/README.md",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = ["-ra", "--strict-markers"]
+
+[tool.fastapi]
+entrypoint = "app.main:app"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "B",
+    "UP",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Alembic 迁移模板是固定格式，不按业务代码规则检查。
+"migrations/env.py" = ["E402"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+# ty 是 Astral 的早期类型检查器：只检查 app 与 tests（命令也会显式传 app tests）。
+# 第三方库的类型噪声用最窄配置处理，而不是关掉测试或整体忽略。
+[tool.ty.src]
+include = ["app", "tests"]
+exclude = ["migrations"]
+
+[tool.ty.environment]
+python-version = "3.13"
+
+[tool.ty.rules]
+# SQLAlchemy / pydantic 等第三方动态属性在 ty 现有版本下仍可能报未知成员，
+# 先降为 warn；真正的类型错误保持 error 级。
+unknown-argument = "warn"

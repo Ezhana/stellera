@@ -1,0 +1,181 @@
+/*
+ * STELLERA HUB — global application styles.
+ *
+ * Obsidian is a fixed dark-mode theme and owns every `--color-*` semantic token plus the
+ * Inter / Playfair Display font stacks; this file never redefines those. It only:
+ *   1. documents the component-layer values the Obsidian contract cannot express
+ *      (gold gradient, strong hairline, inset highlight, tertiary text, pressed gold),
+ *   2. provides the reset, page defaults, eyebrow recipe, focus treatment and reduced-motion rules.
+ *
+ * This stylesheet is intentionally unlayered, so it wins over the theme's `@layer design-tokens`
+ * declarations without specificity battles.
+ */
+
+:root {
+  /*
+   * Component-layer values documented in @ezhana/design-theme-obsidian docs/DESIGN.md.
+   * They are recipes the core semantic contract cannot express, not new theme tokens.
+   */
+  --obsidian-gold-text: #e8d189;
+  --obsidian-tertiary-text: #8f867a;
+  --obsidian-border-strong: color-mix(in srgb, var(--color-fg) 18%, transparent);
+  --obsidian-surface-glass: color-mix(in srgb, var(--color-fg) 4%, transparent);
+  --obsidian-panel-highlight: inset 0 1px 0 rgb(243 239 230 / 0.05);
+  --obsidian-gold-gradient: linear-gradient(
+    135deg,
+    #f7efd4 0%,
+    #d4af37 38%,
+    #b8952b 70%,
+    #96771f 100%
+  );
+  --obsidian-accent-active: #b8952b;
+  --obsidian-accent-soft-hover: color-mix(in srgb, var(--color-accent) 16%, transparent);
+
+  /* Console shell layout tokens (application-level in the Obsidian system). */
+  --hub-sidebar-width: 16.5rem;
+  --hub-content-max: 90rem;
+  --hub-gutter: 2rem;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background-color: var(--color-bg);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-body);
+  line-height: var(--font-line-height-body);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0;
+  color: var(--color-fg-strong);
+  font-family: var(--font-family-heading);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--font-line-height-heading);
+  letter-spacing: -0.02em;
+}
+
+p {
+  margin: 0;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+a {
+  color: var(--color-accent-hover);
+  text-decoration: none;
+  text-underline-offset: 4px;
+  transition: color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+::selection {
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+/* Obsidian section-heading eyebrow: 24px gold rule + tracked uppercase label. */
+.hub-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--primitive-space-3);
+  color: var(--color-accent-hover);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-strong);
+  letter-spacing: var(--font-letter-spacing-label);
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.hub-eyebrow::before {
+  content: '';
+  width: 24px;
+  height: var(--border-width-default);
+  flex: none;
+  background-color: var(--color-accent);
+}
+
+/* One global focus treatment; components may add their own ring on top of it. */
+:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Screen-reader-only helper. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

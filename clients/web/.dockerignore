@@ -1,0 +1,23 @@
+# Docker 构建上下文是 clients/web（pnpm workspace 根）。
+# 排除本地产物与依赖，缩小上下文并避免把宿主机的 node_modules 带进镜像。
+**/node_modules
+**/dist
+**/.vite
+**/.tmp
+**/coverage
+
+# 本地环境变量与日志
+.env
+.env.*
+!.env.example
+**/*.log
+
+# 编辑器 / 系统文件与版本控制
+**/.DS_Store
+**/.idea
+**/.vscode
+.git
+.gitignore
+
+# 文档不影响构建产物
+**/*.md

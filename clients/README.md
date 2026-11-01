@@ -23,7 +23,7 @@ clients/web/
 ├── pnpm-workspace.yaml     # apps/* 与 packages/* 两个 workspace
 ├── pnpm-lock.yaml
 ├── apps/
-│   └── hub/                # 已生成的 Vue 3 + Vite 客户端（产物 apps/hub/dist）
+│   └── hub/                # Vue 3 + Vite 客户端（Obsidian 黑金 + BFF 页面模型，产物 apps/hub/dist）
 ├── packages/               # 共享的 ESLint / Prettier 配置包
 └── README.md               # 前端工作区自己的说明
 ```

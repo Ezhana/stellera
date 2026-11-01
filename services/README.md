@@ -1,6 +1,6 @@
 # services/
 
-后端服务和跨语言契约放在这里：每个服务子目录是一个独立的 Nx 项目，契约固定在 `services/contracts`。仓库当前只有这份说明，还没有子目录。
+后端服务和跨语言契约放在这里：每个服务子目录是一个独立的 Nx 项目，契约固定在 `services/contracts`。当前已接入 `services/python-hub-api`。
 
 ## 放什么
 
@@ -9,6 +9,29 @@
 - 服务侧显式抽出的共享 library：`services/java-shared-core`
 
 客户端、部署编排不在这里：分别在 `clients/`、`deploy/`。
+
+## 当前项目
+
+### `services/python-hub-api` — Stellera Hub 后端（Nx 项目名 `python-hub-api`）
+
+FastAPI + PostgreSQL 的登录与 RBAC 服务，供 `clients/web/apps/hub` 消费。
+
+```text
+services/python-hub-api/
+├── app/                     # FastAPI 应用（create_app 工厂、models、schemas、services）
+├── casbin/model.conf        # Casbin 模型；policy 角色/权限来自 PG
+├── migrations/              # Alembic 异步迁移
+├── tests/                   # pytest（SQLite，不依赖 Docker）
+├── scripts/entrypoint.sh    # 容器启动：迁移 + seed + 启动
+├── project.json             # lint / test / typecheck / build / serve
+├── pyproject.toml / uv.lock
+└── Dockerfile
+```
+
+- 本地开发：`uv sync` → `uv run alembic upgrade head` → `uv run python -m app.scripts.seed` → `uv run fastapi dev`。
+- 数据库与全栈编排：`infra/`（`docker compose -f ../../infra/compose.yaml up -d db` 或完整 `up --build`）。
+- 认证：Authlib 签发 JWT；授权：pycasbin 中间件；角色/权限/用户-角色存 PostgreSQL，启动时投影到 Casbin。
+- 设计取舍见 [`docs/adr/0001-auth-rbac.md`](../docs/adr/0001-auth-rbac.md)。
 
 ## 命名与结构
 

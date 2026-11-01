@@ -1,10 +1,11 @@
-# CI：只跑受影响的项目。仓库已接入第一个项目 clients/web，这条流水线从模板的
-# "空跑占位"变成真正执行 lint / test / build，命令本身不需要随项目增加再改。
+# CI：只跑受影响的项目。当前仓库有 clients/web（Nx 项目 web）与
+# services/python-hub-api（Nx 项目 python-hub-api），加项目不需要改命令。
 #
 # 版本策略：模板不替使用者做技术选型，Node 与 pnpm 的版本由项目自己的配置声明——
 # clients/web/package.json 里的 engines.node 与 packageManager 字段。
 # 所以下面的 setup-node 只是跟随项目的 engines 声明；pnpm 由 corepack 按
-# packageManager 字段自动取用。实际版本都会打印到日志里，便于追溯。
+# packageManager 字段自动取用。Python 版本跟随 services/python-hub-api/.python-version
+# （3.13），由 setup-uv 安装。实际版本都会打印到日志里，便于追溯。
 name: CI
 
 on:
@@ -29,6 +30,14 @@ jobs:
           # 就会退化成全量对比，因此必须拉完整历史。
           fetch-depth: 0
 
+      # Python 与 uv 跟随后端自己的 .python-version（3.13）与 uv.lock。
+      # setup-uv 同时把 uv 和对应 Python 放进 PATH，后端 target 直接 uv run 即可。
+      - name: Setup Python and uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
       # Node 版本跟随 clients/web/package.json 的 engines.node（>=24 <25），
       # 而不是模板层强加的版本。
       - name: Setup Node.js
@@ -47,6 +56,12 @@ jobs:
           cd clients/web
           pnpm install --frozen-lockfile
 
+      # 后端自带 uv.lock；--frozen 保证解析结果与本地一致。
+      - name: Install backend dependencies
+        run: |
+          cd services/python-hub-api
+          uv sync --frozen
+
       # 根目录刻意没有 package.json / lockfile（见 README 的设计说明），
       # 而 Nx 24 起需要工作区里有本地 Nx 模块，所以这里只为本次 CI 临时装一份：
       # 不写进仓库、不固定版本，由下面的版本打印保证可追溯。
@@ -60,8 +75,10 @@ jobs:
           npx nx --version
           node --version
           (cd clients/web && pnpm --version)
+          uv --version
+          python --version
 
       - name: Run affected targets
-        # 只跑受影响项目，避免每次 PR 全量跑。项目当前没有测试用例，
-        # test 是 `pnpm -r --if-present test`，没有项目提供该脚本时正常退出。
-        run: npx nx affected -t lint test build --parallel=3
+        # 只跑受影响项目，避免每次 PR 全量跑。前端 test 是 `pnpm -r --if-present test`，
+        # 后端 test 是 uv run pytest；typecheck 分别对应 vue-tsc 与 ty。
+        run: npx nx affected -t lint test build typecheck --parallel=3

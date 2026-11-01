@@ -15,3 +15,4 @@ catalog:
 
 minimumReleaseAgeExclude:
   - create-ezhana-app@0.5.0
+  - '@ezhana/design-theme-obsidian@0.0.0'

@@ -2,6 +2,8 @@
 
 部署侧的配置放在这里：容器编排、Kubernetes / Helm 清单、环境变量模板和发布脚本。仓库当前只有这份说明，还没有子目录。
 
+> 本地开发/演示用的 Docker Compose（PostgreSQL + API + 前端）在根目录 [`infra/`](../infra/README.md)，不属于发布编排；`deploy/` 面向 staging/prod。
+
 ## 放什么
 
 - `docker-compose` 编排，按环境分子目录

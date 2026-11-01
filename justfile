@@ -18,8 +18,8 @@ projects:
 run target:
     npx nx run-many -t {{target}}
 
-# 只对受影响的项目执行 targets，默认 lint test build
-affected targets="lint test build":
+# 只对受影响的项目执行 targets，默认 lint test build typecheck
+affected targets="lint test build typecheck":
     npx nx affected -t {{targets}}
 
 # 透传任意参数给 nx，作为兜底入口（不写死任何版本，跟随全局安装的 nx）

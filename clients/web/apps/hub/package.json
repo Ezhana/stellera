@@ -8,13 +8,18 @@
     "build": "run-p type-check \"build-only {@}\" --",
     "preview": "vite preview",
     "build-only": "vite build",
-    "type-check": "vue-tsc --build"
+    "type-check": "vue-tsc --build",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "@ezhana/design-theme-quest": "^0.1.0",
+    "@ezhana/design-theme-obsidian": "^0.0.0",
     "@ezhana/design-tokens": "^1.1.0",
     "@ezhana/theme": "^0.4.0",
-    "vue": "^3.5.42"
+    "pinia": "^4.1.0",
+    "vue": "^3.5.42",
+    "vue-router": "^5.4.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@ezhana/eslint-config-vue": "workspace:*",
@@ -22,13 +27,18 @@
     "@tsconfig/node24": "^24.0.5",
     "@types/node": "^24.13.4",
     "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/devtools-api": "^8.2.1",
+    "@vue/server-renderer": "^3.5.44",
+    "@vue/test-utils": "^2.5.1",
     "@vue/tsconfig": "^0.9.1",
     "eslint": "10.10.0",
+    "jsdom": "^30.1.3",
     "npm-run-all2": "^9.0.3",
     "prettier": "3.9.8",
     "typescript": "~6.0.2",
     "vite": "^8.2.2",
     "vite-plugin-vue-devtools": "^8.2.1",
+    "vitest": "^5.0.5",
     "vue-tsc": "^3.3.11"
   },
   "engines": {

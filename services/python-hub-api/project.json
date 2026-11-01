@@ -1,0 +1,46 @@
+{
+  "name": "python-hub-api",
+  "projectType": "application",
+  "sourceRoot": "services/python-hub-api/app",
+  "tags": ["type:app", "platform:backend", "scope:service"],
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run ruff check . && uv run ruff format --check .",
+        "cwd": "services/python-hub-api"
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run ty check app tests",
+        "cwd": "services/python-hub-api"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run pytest",
+        "cwd": "services/python-hub-api"
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv build",
+        "cwd": "services/python-hub-api"
+      },
+      "outputs": ["{projectRoot}/dist"]
+    },
+    "serve": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run fastapi dev --host 0.0.0.0 --port 8000",
+        "cwd": "services/python-hub-api"
+      },
+      "cache": false
+    }
+  }
+}
