@@ -1,0 +1,33 @@
+{
+  "name": "@ezhana/eslint-config-typescript",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ESLint flat config for TypeScript projects.",
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "keywords": [
+    "eslint",
+    "eslint-config",
+    "eslint-flat-config",
+    "typescript"
+  ],
+  "author": "Ezhana",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "peerDependencies": {
+    "eslint": "catalog:",
+    "typescript": "catalog:"
+  },
+  "dependencies": {
+    "@ezhana/eslint-config-base": "workspace:*",
+    "typescript-eslint": "8.70.0"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "@ezhana/eslint-config-react",
+  "version": "0.1.1",
+  "private": true,
+  "description": "ESLint flat config for React and TypeScript projects.",
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "keywords": [
+    "eslint",
+    "eslint-config",
+    "eslint-flat-config",
+    "react",
+    "typescript"
+  ],
+  "author": "Ezhana",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "peerDependencies": {
+    "eslint": "catalog:",
+    "typescript": "catalog:"
+  },
+  "dependencies": {
+    "@ezhana/eslint-config-base": "workspace:*",
+    "@ezhana/eslint-config-typescript": "workspace:*",
+    "@eslint-react/eslint-plugin": "5.20.0",
+    "eslint-plugin-react-hooks": "7.1.1"
+  }
+}

@@ -1,0 +1,67 @@
+# CI：只跑受影响的项目。仓库已接入第一个项目 clients/web，这条流水线从模板的
+# "空跑占位"变成真正执行 lint / test / build，命令本身不需要随项目增加再改。
+#
+# 版本策略：模板不替使用者做技术选型，Node 与 pnpm 的版本由项目自己的配置声明——
+# clients/web/package.json 里的 engines.node 与 packageManager 字段。
+# 所以下面的 setup-node 只是跟随项目的 engines 声明；pnpm 由 corepack 按
+# packageManager 字段自动取用。实际版本都会打印到日志里，便于追溯。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支的新推送会取消旧运行，避免过期的 CI 结果占用 runner 和排队时间
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  affected:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # affected 要拿当前 commit 和 base 分支比差异，浅克隆里找不到基准 commit
+          # 就会退化成全量对比，因此必须拉完整历史。
+          fetch-depth: 0
+
+      # Node 版本跟随 clients/web/package.json 的 engines.node（>=24 <25），
+      # 而不是模板层强加的版本。
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # 项目用 corepack 的 packageManager 字段锁 pnpm 版本；
+      # 这里启用 shim，CI 不需要再把版本号抄一遍。
+      - name: Enable pnpm (version from packageManager)
+        run: corepack enable pnpm
+
+      # 项目自带 pnpm workspace 与 lockfile；frozen-lockfile 保证 CI 用的是锁定的依赖。
+      - name: Install client dependencies
+        run: |
+          cd clients/web
+          pnpm install --frozen-lockfile
+
+      # 根目录刻意没有 package.json / lockfile（见 README 的设计说明），
+      # 而 Nx 24 起需要工作区里有本地 Nx 模块，所以这里只为本次 CI 临时装一份：
+      # 不写进仓库、不固定版本，由下面的版本打印保证可追溯。
+      - name: Install Nx (unpinned, ephemeral)
+        run: |
+          npm init --yes > /dev/null
+          npm install nx --no-fund --no-audit
+
+      - name: Print tool versions
+        run: |
+          npx nx --version
+          node --version
+          (cd clients/web && pnpm --version)
+
+      - name: Run affected targets
+        # 只跑受影响项目，避免每次 PR 全量跑。项目当前没有测试用例，
+        # test 是 `pnpm -r --if-present test`，没有项目提供该脚本时正常退出。
+        run: npx nx affected -t lint test build --parallel=3

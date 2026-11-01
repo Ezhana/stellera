@@ -1,0 +1,46 @@
+{
+  "name": "web",
+  "projectType": "application",
+  "sourceRoot": "clients/web/apps/hub/src",
+  "tags": ["type:app", "platform:web", "scope:client"],
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "targets": {
+    "serve": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run dev",
+        "cwd": "clients/web"
+      },
+      "cache": false
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run build",
+        "cwd": "clients/web"
+      },
+      "outputs": ["{projectRoot}/apps/*/dist"]
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run lint",
+        "cwd": "clients/web"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm -r --if-present run test",
+        "cwd": "clients/web"
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm -r --filter \"./apps/*\" --if-present run type-check",
+        "cwd": "clients/web"
+      }
+    }
+  }
+}

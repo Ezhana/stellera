@@ -1,0 +1,37 @@
+{
+  "name": "frontend-template",
+  "private": true,
+  "description": "Frontend monorepo starter; choose React or Vue with pnpm create:app.",
+  "scripts": {
+    "lint": "eslint . && pnpm -r --filter \"./apps/*\" --if-present lint",
+    "lint:fix": "eslint . --fix && pnpm -r --filter \"./apps/*\" --if-present lint:fix",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
+    "build:packages": "pnpm -r --filter \"./packages/*\" --if-present build",
+    "build:apps": "pnpm -r --filter \"./apps/*\" --if-present build",
+    "build": "pnpm build:packages && pnpm build:apps",
+    "dev": "pnpm -r --filter \"./apps/*\" --parallel --if-present dev",
+    "create:app": "create-ezhana-app",
+    "check": "pnpm format:check && pnpm lint && pnpm build",
+    "prepare": "simple-git-hooks"
+  },
+  "author": "Ezhana",
+  "license": "MIT",
+  "packageManager": "pnpm@12.4.2",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "sh -c 'if [ -d clients/web ]; then cd clients/web; fi; exec pnpm exec lint-staged'"
+  },
+  "devDependencies": {
+    "@ezhana/eslint-config-base": "workspace:*",
+    "@ezhana/prettier-config": "workspace:*",
+    "create-ezhana-app": "0.5.0",
+    "eslint": "catalog:",
+    "lint-staged": "17.5.1",
+    "prettier": "catalog:",
+    "simple-git-hooks": "2.14.0",
+    "typescript": "catalog:"
+  }
+}

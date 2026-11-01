@@ -1,0 +1,7 @@
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  transition:
+    background-color var(--motion-duration-normal) var(--motion-easing-standard),
+    color var(--motion-duration-normal) var(--motion-easing-standard);
+}
