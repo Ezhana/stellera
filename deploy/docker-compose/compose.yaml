@@ -119,8 +119,12 @@ services:
       args:
         # 内网无法直连 Docker Hub / ghcr.io 时，在 env 里换成镜像代理地址。
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.13-slim}
-        # 固定 uv 版本（与 Dockerfile 默认值一致），避免 latest 漂移导致锁文件校验行为不一致。
-        UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:0.13.6}
+        # uv 默认跟随 latest；需要完全可复现的构建时可在 env 里覆盖成具体版本。
+        UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:latest}
+        # pip 源（可选）：留空使用官方 PyPI，配置说明见 deploy/env/staging.env.example。
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
     restart: unless-stopped
     environment: *api-environment
     ports:
@@ -154,6 +158,9 @@ services:
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
         NGINX_IMAGE: ${NGINX_IMAGE:-nginx:1.29-alpine}
+        # npm / corepack 源（可选）：留空使用官方 registry。
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+        COREPACK_NPM_REGISTRY: ${COREPACK_NPM_REGISTRY:-}
     restart: unless-stopped
     ports:
       # 唯一对外开放的入口：http://<host>:${WEB_PORT}

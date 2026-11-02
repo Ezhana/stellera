@@ -46,7 +46,7 @@ git pull
 cp deploy/env/staging.env.example deploy/env/staging.env   # 纯 KEY=VALUE 模板
 just gen-secret 16        # 生成 POSTGRES_PASSWORD（32 位十六进制），填进 env
 just gen-secret 32        # 生成 JWT_SECRET（64 位十六进制），填进 env
-# 按需改 deploy/env/staging.env 的 WEB_PORT / CORS_ORIGINS / 镜像代理
+# 按需改 deploy/env/staging.env 的 WEB_PORT / CORS_ORIGINS / 镜像代理 / pip 源 / npm 源
 mkdir -p deploy/.state/backups
 just deploy staging
 ```

@@ -38,6 +38,11 @@ services:
       context: ../services/python-hub-api
       args:
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.13-slim}
+        UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:latest}
+        # pip 源（可选）：留空使用官方 PyPI，配置说明见 infra/.env.example。
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
     restart: unless-stopped
     environment:
       APP_ENV: development
@@ -84,6 +89,9 @@ services:
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
         NGINX_IMAGE: ${NGINX_IMAGE:-nginx:1.29-alpine}
+        # npm / corepack 源（可选）：留空使用官方 registry，配置说明见 infra/.env.example。
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+        COREPACK_NPM_REGISTRY: ${COREPACK_NPM_REGISTRY:-}
     restart: unless-stopped
     ports:
       - "${WEB_PORT:-8080}:80"

@@ -140,4 +140,6 @@ docker run --rm -p 8080:80 <image>
 镜像内用 nginx 托管 `dist`：`nginx.conf` 提供 SPA history 回退，并把 `/api/` 代理到
 compose 网络中的 `api:8000`。单独 `docker run` 只适合验证静态站点；带后端与数据库的
 完整本地环境请用根目录 `infra/compose.yaml`。构建期可用
-`--build-arg NODE_IMAGE=...` / `--build-arg NGINX_IMAGE=...` 覆盖基础镜像。
+`--build-arg NODE_IMAGE=...` / `--build-arg NGINX_IMAGE=...` 覆盖基础镜像；
+内网 npm 源用 `--build-arg NPM_REGISTRY=...`（corepack 下载 pnpm 的源单独用
+`--build-arg COREPACK_NPM_REGISTRY=...`，不填时复用 `NPM_REGISTRY`），留空均为官方 registry。

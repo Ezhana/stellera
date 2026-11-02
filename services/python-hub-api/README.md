@@ -293,14 +293,26 @@ exec `fastapi run --host 0.0.0.0 --port 8000`，CLI 自动发现 `app/main.py` �
 `migrate`（只跑迁移）、`seed`（只写种子）与 `smoke`（冒烟检查）子命令，其余参数透传执行；
 一次性任务复用同一镜像，例如 `docker compose run --rm migrate` / `--rm seed` / `--rm smoke`。
 
-如果 Docker Hub 不可直连，可通过 build arg 指定镜像代理（默认仍是官方 tag）：
+如果 Docker Hub / ghcr.io 不可直连，可通过 build arg 指定镜像代理（默认仍是官方 tag；
+`UV_IMAGE` 默认跟随 `latest`，需要完全可复现的构建时可覆盖成具体版本）：
 
 ```bash
-docker build --build-arg PYTHON_IMAGE=registry.example.com/python:3.13-slim .
+docker build --build-arg PYTHON_IMAGE=registry.example.com/python:3.13-slim \
+  --build-arg UV_IMAGE=registry.example.com/astral-sh/uv:latest .
+```
+
+内网 pip 源同样通过 build arg 配置（留空使用官方 PyPI；镜像内的 uv 会将其映射为
+`UV_DEFAULT_INDEX` / `UV_EXTRA_INDEX_URL` / `UV_INSECURE_HOST`）：
+
+```bash
+docker build \
+  --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+  --build-arg PIP_EXTRA_INDEX_URL=https://mirrors.example.com/simple \
+  --build-arg PIP_TRUSTED_HOST=mirrors.example.com .
 ```
 
 本地全栈（PostgreSQL + API + nginx 前端）见 `infra/compose.yaml`；该文件会把
-`PYTHON_IMAGE` 作为 build arg 传进来。
+`PYTHON_IMAGE` / `UV_IMAGE` / `PIP_*` 作为 build arg 传进来。
 
 ## 与仓库其他部分的关系
 

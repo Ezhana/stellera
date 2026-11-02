@@ -9,10 +9,28 @@ ARG NODE_IMAGE=node:24-alpine
 ARG NGINX_IMAGE=nginx:1.29-alpine
 FROM ${NODE_IMAGE} AS build
 
+# ---------- npm / corepack 源（构建期安装依赖） ----------
+# 通过 build arg 配置，留空则使用官方 npm registry：
+#   NPM_REGISTRY          -> npm / pnpm 的包源（同时设置 npm_config_registry 与 pnpm_config_registry）
+#   COREPACK_NPM_REGISTRY -> corepack 下载 pnpm 的源；留空时复用 NPM_REGISTRY
+ARG NPM_REGISTRY=
+ARG COREPACK_NPM_REGISTRY=
+# npm 与 corepack 读 npm_config_registry，pnpm 12 只认 pnpm_config_registry，两者都设置；
+# 空值等价于未设置，保持官方 registry。
+ENV npm_config_registry=${NPM_REGISTRY} \
+    pnpm_config_registry=${NPM_REGISTRY}
+
 WORKDIR /workspace
 
 # 固定与 package.json 中 packageManager 一致的 pnpm 版本。
-RUN corepack enable && corepack prepare pnpm@12.4.2 --activate
+# corepack prepare 会从 npm registry 下载 pnpm，因此需要单独设置 COREPACK_NPM_REGISTRY；
+# 未单独配置时回退到 NPM_REGISTRY，两者都为空则走官方源。
+RUN set -eu; \
+    corepack_registry="${COREPACK_NPM_REGISTRY:-${NPM_REGISTRY}}"; \
+    if [ -n "${corepack_registry}" ]; then \
+        export COREPACK_NPM_REGISTRY="${corepack_registry}"; \
+    fi; \
+    corepack enable && corepack prepare pnpm@12.4.2 --activate
 
 # 先复制 workspace 清单，最大化利用 Docker 层缓存。
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./

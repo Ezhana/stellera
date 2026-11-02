@@ -1,17 +1,30 @@
-# 允许通过 build arg 指向镜像代理（例如内网 registry），默认仍是官方镜像。
-# infra/compose.yaml 的 api.build.args 会传 PYTHON_IMAGE；deploy/ 的测试环境编排
-# 还会传 UV_IMAGE，方便 ghcr.io 不可直连的测试机。
+# 允许通过 build arg 指向镜像代理 / 内网源，默认仍是官方镜像与官方 PyPI。
+# infra/compose.yaml 与 deploy/ 的测试环境编排都会传 PYTHON_IMAGE / UV_IMAGE / PIP_*；
+# 单镜像手构建示例见 services/python-hub-api/README.md「Docker」。
 #
 # uv 镜像单独声明成命名 stage：BuildKit 不支持 `COPY --from=${ARG}` 的变量展开，
 # 先 `FROM ${UV_IMAGE} AS uv` 再 `COPY --from=uv` 是官方 workaround。
-# uv 固定到具体版本，避免 `latest` 漂移导致不同机器上锁文件校验行为不一致；
-# 内网镜像代理请同样固定到对应 tag（见 deploy/env/staging.env.example）。
+# uv 默认跟随 `latest` 的最新版本；需要完全可复现的构建时，可在 env 里覆盖成具体版本。
 ARG PYTHON_IMAGE=python:3.13-slim
-ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.6
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:latest
 FROM ${UV_IMAGE} AS uv
 FROM ${PYTHON_IMAGE}
 
 COPY --from=uv /uv /uvx /bin/
+
+# ---------- pip 源（构建期安装依赖） ----------
+# 通过 build arg 配置 pip 源，留空则使用官方 PyPI。
+# uv 不读取 pip 的 PIP_* 环境变量，这里显式映射成 uv 自己的索引配置：
+#   PIP_INDEX_URL       -> UV_DEFAULT_INDEX（主索引）
+#   PIP_EXTRA_INDEX_URL -> UV_EXTRA_INDEX_URL（附加索引）
+#   PIP_TRUSTED_HOST    -> UV_INSECURE_HOST（http 源放行主机，填 host 或 host:port，不带 scheme）
+# 变量为空时 uv 按未设置处理，保持默认官方源。
+ARG PIP_INDEX_URL=
+ARG PIP_EXTRA_INDEX_URL=
+ARG PIP_TRUSTED_HOST=
+ENV UV_DEFAULT_INDEX=${PIP_INDEX_URL} \
+    UV_EXTRA_INDEX_URL=${PIP_EXTRA_INDEX_URL} \
+    UV_INSECURE_HOST=${PIP_TRUSTED_HOST}
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
