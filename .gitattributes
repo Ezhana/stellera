@@ -1,0 +1,6 @@
+# 仓库级换行约定。
+# 容器入口脚本与 Dockerfile 必须是 LF：Windows checkout 的 CRLF 会让 /bin/sh
+# 解析脚本时报 bad interpreter / 找不到命令；Dockerfile 的续行也会被破坏。
+# （Dockerfile 里另有 sed/chmod 兜底，防止构建上下文来自不保留权限/换行的环境。）
+*.sh        text eol=lf
+Dockerfile  text eol=lf

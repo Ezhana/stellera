@@ -188,10 +188,15 @@ Dockerfile 或 compose：
 ```dotenv
 POSTGRES_IMAGE=<mirror>/library/postgres:18
 PYTHON_IMAGE=<mirror>/library/python:3.13-slim
-UV_IMAGE=<mirror>/astral-sh/uv:latest
+UV_IMAGE=<mirror>/astral-sh/uv:0.13.6
 NODE_IMAGE=<mirror>/library/node:24-alpine
 NGINX_IMAGE=<mirror>/library/nginx:1.29-alpine
 ```
+
+> `UV_IMAGE` 请固定到具体版本（默认是 `ghcr.io/astral-sh/uv:0.13.6`），不要用 `latest`：
+> 不同 uv 版本的锁文件校验行为可能不同，会在构建时报
+> `The lockfile at uv.lock needs to be updated`。镜像构建统一使用 `uv sync --frozen`，
+> 以 `uv.lock` 为唯一来源；改依赖时在 `services/python-hub-api` 里执行 `uv lock` 并提交。
 
 ### 密码与 URL
 
@@ -206,6 +211,9 @@ NGINX_IMAGE=<mirror>/library/nginx:1.29-alpine
 | `deploy.sh` 报环境变量占位值 | 先跑 `init-env.sh`，或手工替换 `JWT_SECRET` / `POSTGRES_PASSWORD` |
 | 对已有数据的环境 `init-env --force` 后 api 连不上库 | 数据库密码变了但数据卷里还是旧密码；同步改库密码，或 `down.sh --volumes` 重建（会丢数据） |
 | 构建失败（拉基础镜像超时） | 配置内网镜像代理（见「镜像源限制」），或先 `docker pull` 后 `docker tag` 成标准名 |
+| 构建报 `The lockfile at uv.lock needs to be updated` | 镜像构建已改用 `uv sync --frozen`；若仍出现，检查 `UV_IMAGE` 是否被覆盖成过旧/过新的 uv，固定到 `0.13.6` 与 Dockerfile 一致；依赖变更请 `uv lock` 后提交 |
+| 容器启动报 `exec: "/app/scripts/entrypoint.sh": permission denied` | 构建上下文（Windows/共享盘）丢失了可执行位；Dockerfile 已 `sed + chmod` 兜底，重新构建即可（加 `--no-cache` 确保刷新该层） |
+| 容器启动报 `bad interpreter` / 脚本里出现 `\r` | 构建上下文是 CRLF 换行；Dockerfile 已做 `sed` 兜底，仓库也加了 `.gitattributes` 强制 shell 脚本 LF |
 | api 未就绪 | `deploy/scripts/logs.sh --env staging api`；常见原因是数据库密码与 `POSTGRES_PASSWORD` 不一致 |
 | 8080 被占用 | 改 env 的 `WEB_PORT` 后重新 `deploy.sh --env staging` |
 | 页面 502 / WebSocket 断开 | 先看 `logs.sh api`；nginx 需要能解析 compose 服务名 `api`，确认 web 与 api 同 project |

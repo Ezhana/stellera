@@ -4,8 +4,10 @@
 #
 # uv 镜像单独声明成命名 stage：BuildKit 不支持 `COPY --from=${ARG}` 的变量展开，
 # 先 `FROM ${UV_IMAGE} AS uv` 再 `COPY --from=uv` 是官方 workaround。
+# uv 固定到具体版本，避免 `latest` 漂移导致不同机器上锁文件校验行为不一致；
+# 内网镜像代理请同样固定到对应 tag（见 deploy/env/staging.env.example）。
 ARG PYTHON_IMAGE=python:3.13-slim
-ARG UV_IMAGE=ghcr.io/astral-sh/uv:latest
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.6
 FROM ${UV_IMAGE} AS uv
 FROM ${PYTHON_IMAGE}
 
@@ -25,10 +27,19 @@ RUN groupadd --system --gid 10001 app \
 
 # 先复制依赖清单，充分利用 Docker 层缓存。
 COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-dev --no-install-project
+# --frozen：严格按 uv.lock 安装，不检查、不更新锁文件。
+# 镜像构建环境（不同平台的 uv / 镜像代理索引）曾对 --locked 的锁校验行为不一致，
+# 报 "The lockfile at uv.lock needs to be updated"；构建统一从锁文件安装保证可复现。
+# 依赖变更请在服务目录执行 `uv lock` 并提交 uv.lock，再重新构建镜像。
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY --chown=app:app . .
-RUN uv sync --locked --no-dev
+# 构建上下文可能来自 Windows / 共享盘等不保留 Unix 权限与换行的环境：
+# 显式恢复入口脚本的可执行位并去掉 CRLF，否则容器启动会报
+# exec: "/app/scripts/entrypoint.sh": permission denied / bad interpreter。
+RUN sed -i 's/\r$//' /app/scripts/entrypoint.sh \
+    && chmod 755 /app/scripts/entrypoint.sh
+RUN uv sync --frozen --no-dev
 
 USER app
 
