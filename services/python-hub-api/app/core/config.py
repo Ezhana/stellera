@@ -14,6 +14,19 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 DEFAULT_INSECURE_JWT_SECRET = "local-dev-only-change-me-32-characters-min"
 
+# 部署模板（deploy/env/*.env.example）里的占位值前缀；非 development/test 环境必须替换。
+PLACEHOLDER_PREFIXES = ("replace-", "change-me")
+# 生产环境禁止的演示弱口令集合，与 deploy/env/*.env.example 里的演示账号口径保持一致。
+DEMO_WEAK_PASSWORDS = frozenset(
+    {
+        "admin12345",
+        "operator12345",
+        "viewer12345",
+        "enterprise12345",
+        "engineer12345",
+    }
+)
+
 # 服务根目录：app/core/config.py -> app/core -> app -> <service root>
 SERVICE_ROOT = Path(__file__).resolve().parents[2]
 
@@ -40,6 +53,8 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        # 启动 fail-fast 的错误信息通常会进容器日志；不要把 JWT_SECRET/数据库口令等原始值打印出来。
+        hide_input_in_errors=True,
     )
 
     # ---------- 运行环境 ----------
@@ -92,11 +107,60 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_security_settings(self) -> Settings:
+        """启动即校验安全相关配置，避免带着模板占位值/演示弱口令上线。
+
+        development/test 保持开箱可用（允许示例 JWT 与弱口令演示账号）；
+        staging/production 拒绝模板占位值与过度宽松的配置。
+        """
         if len(self.jwt_secret) < 32:
-            raise ValueError("JWT_SECRET 至少需要 32 个字符")
-        if self.app_env not in {"development", "test"}:
-            if self.jwt_secret == DEFAULT_INSECURE_JWT_SECRET:
-                raise ValueError("非 development 环境必须显式设置 JWT_SECRET，不能使用示例值")
+            raise ValueError(
+                f"JWT_SECRET 至少需要 32 个字符（当前 {len(self.jwt_secret)} 个）；"
+                "请用 `just gen-secret 32` 生成后写入环境变量"
+            )
+
+        if self.app_env in {"development", "test"}:
+            return self
+
+        if self.jwt_secret == DEFAULT_INSECURE_JWT_SECRET:
+            raise ValueError(
+                "非 development/test 环境必须显式设置 JWT_SECRET，不能使用本地开发示例值；"
+                "请用 `just gen-secret 32` 生成后写入环境变量"
+            )
+        if self.jwt_secret.strip().lower().startswith(PLACEHOLDER_PREFIXES):
+            raise ValueError(
+                "JWT_SECRET 仍是部署模板里的占位值（replace-*/change-me*），"
+                "非 development/test 环境必须替换；请用 `just gen-secret 32` 生成真实密钥"
+            )
+        database_url = self.database_url.strip().lower()
+        if any(token in database_url for token in PLACEHOLDER_PREFIXES):
+            raise ValueError(
+                "DATABASE_URL 仍包含模板占位密码（replace-*/change-me*），"
+                "非 development/test 环境必须替换；"
+                "请用 `just gen-secret 32` 生成强密码并同步修改"
+            )
+
+        if self.app_env == "production":
+            if self.seed_demo_users:
+                raise ValueError(
+                    "生产环境不允许 SEED_DEMO_USERS=true：会创建弱口令演示账号与演示订单；"
+                    "请设置 SEED_DEMO_USERS=false"
+                )
+            seed_passwords = {
+                "SEED_ADMIN_PASSWORD": self.seed_admin_password,
+                "SEED_OPERATOR_PASSWORD": self.seed_operator_password,
+                "SEED_VIEWER_PASSWORD": self.seed_viewer_password,
+                "SEED_ENTERPRISE_PASSWORD": self.seed_enterprise_password,
+                "SEED_ENGINEER_PASSWORD": self.seed_engineer_password,
+            }
+            weak_vars = [
+                name for name, value in seed_passwords.items() if value in DEMO_WEAK_PASSWORDS
+            ]
+            if weak_vars:
+                raise ValueError(
+                    "生产环境不允许使用演示弱口令："
+                    + "、".join(weak_vars)
+                    + "；请用 `just gen-secret 32` 生成强口令后写入对应环境变量"
+                )
         return self
 
 

@@ -1,19 +1,20 @@
-# Stellera Hub 测试环境（staging）Docker Compose 编排。
+# Stellera Hub 单机 Docker Compose 编排（测试环境 / 小规模生产）。
 #
-# 与 infra/compose.yaml（本地开发/演示）的分工：
-#   - 这里只服务测试环境：对外入口是 web 的 ${WEB_PORT}；db 不映射宿主机端口；
-#     api 默认只绑 127.0.0.1，避免 Swagger/API 直接暴露到公网；
-#   - 镜像带发布版本 tag（${RELEASE_VERSION}），由 deploy/scripts/deploy.sh 注入；
-#   - APP_ENV=staging、DEBUG=false，JWT_SECRET 必须由 deploy/env/<env>.env 提供真实值；
-#   - 按测试需求保留弱口令演示账号与 10 条 FDE 演示订单（生产环境必须改掉）。
+# 设计原则：宿主只做 `docker compose` 转发（入口是仓库根 justfile），
+# 就绪、备份、恢复、迁移、冒烟全部由 compose 声明或镜像内脚本完成：
+#   - 常驻服务就绪：healthcheck + depends_on（db ← api ← web），没有宿主轮询脚本；
+#   - 一次性 job：`--profile ops` 下的 migrate / seed / smoke / backup / restore，
+#     逻辑在镜像内（api 镜像的 entrypoint 子命令、deploy/ops 镜像的备份恢复脚本），
+#     用 `docker compose run --rm <job>` 触发；
+#   - 应用镜像 tag 是不可变的发布版本（RELEASE_VERSION），回滚只切 tag；
+#     ops 工具镜像不随发布版本走（OPS_IMAGE_TAG），保证旧版本回滚时备份/恢复仍可用。
 #
-# 不要直接 `docker compose up`：先准备环境变量并统一走脚本，脚本负责构建、备份、
-# 等待健康、冒烟测试和发布状态记录。
+# 变量全部来自 deploy/env/<env>.env（模板见 deploy/env/staging.env.example）：
+#   just deploy staging          # 构建 → 发布前备份 → up -d → 冒烟
+#   just status staging          # 容器 / 健康 / 实际镜像 tag
 #
-#   deploy/scripts/init-env.sh --env staging   # 首次：生成 deploy/env/staging.env
-#   deploy/scripts/deploy.sh --env staging     # 日常发布
-#
-# 所有变量来自 deploy/env/<env>.env（模板见 deploy/env/staging.env.example）。
+# 不要绕过 just 直接 up：RELEASE_VERSION 由 justfile 导出（当前 git describe），
+# 这里用 `:?` 强制要求它，避免误用 :local 之类的可变 tag。
 
 name: ${COMPOSE_PROJECT_NAME:-stellera-hub-staging}
 
@@ -24,20 +25,76 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "3"
 
+# api 运行环境：常驻 api 与一次性 migrate/seed/smoke 共用。
+# 后端 Settings 启动即 fail-fast（APP_ENV / DATABASE_URL / JWT_SECRET 等），
+# 所以一次性任务也必须拿到完整环境，否则会因配置校验直接退出。
+x-api-environment: &api-environment
+  APP_ENV: ${APP_ENV:-staging}
+  DEBUG: ${DEBUG:-false}
+  # 容器内通过服务名 db 访问 PostgreSQL；密码必须保持 URL 安全字符
+  # （just gen-secret 生成的是十六进制串，见 README「密码与 URL」）。
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-hub}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 未设置}@db:5432/${POSTGRES_DB:-hub}
+  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 未设置}
+  JWT_ISSUER: ${JWT_ISSUER:-stellera-hub}
+  JWT_AUDIENCE: ${JWT_AUDIENCE:-stellera-hub-web}
+  ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-900}
+  REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-604800}
+  # 同源部署（浏览器访问 web 的 /api 反代）其实不需要 CORS，
+  # 这里只放开测试入口，避免误配置成 *。
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+  DOCS_ENABLED: ${DOCS_ENABLED:-false}
+  SEED_ADMIN_USERNAME: ${SEED_ADMIN_USERNAME:-admin}
+  SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-admin12345}
+  SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@example.com}
+  SEED_DEMO_USERS: ${SEED_DEMO_USERS:-true}
+  SEED_OPERATOR_PASSWORD: ${SEED_OPERATOR_PASSWORD:-operator12345}
+  SEED_VIEWER_PASSWORD: ${SEED_VIEWER_PASSWORD:-viewer12345}
+  SEED_ENTERPRISE_PASSWORD: ${SEED_ENTERPRISE_PASSWORD:-enterprise12345}
+  SEED_ENGINEER_PASSWORD: ${SEED_ENGINEER_PASSWORD:-engineer12345}
+
+# 冒烟 job：api 镜像的 `smoke` 子命令在 compose 网络内跑完整链路
+# （web /healthz → nginx → api → DB → RBAC → WebSocket），不依赖宿主 curl。
+x-smoke-environment: &smoke-environment
+  <<: *api-environment
+  SMOKE_BASE_URL: http://web
+  SMOKE_USERNAME: ${SEED_ADMIN_USERNAME:-admin}
+  SMOKE_PASSWORD: ${SEED_ADMIN_PASSWORD:-admin12345}
+
+# 备份 / 恢复 job 的数据库连接与策略；脚本（deploy/ops/*.sh）只读这些环境变量。
+x-pg-environment: &pg-environment
+  PGHOST: db
+  PGPORT: "5432"
+  PGUSER: ${POSTGRES_USER:-hub}
+  PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 未设置}
+  PGDATABASE: ${POSTGRES_DB:-hub}
+  BACKUP_DIR: /backups
+  BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+  BACKUP_LABEL: ${BACKUP_LABEL:-manual}
+  DEPLOY_ENV: ${DEPLOY_ENV:-staging}
+  TZ: UTC
+
+# ops 工具镜像：FROM postgres:18，自带与 db 同版本的 pg_dump / psql。
+# 由 backup / restore 两个 job 共用同一个镜像 tag。
+x-ops-build: &ops-build
+  context: ../ops
+  args:
+    POSTGRES_IMAGE: ${POSTGRES_IMAGE:-postgres:18}
+
 services:
   db:
     image: ${POSTGRES_IMAGE:-postgres:18}
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-hub}
-      # 没有密码直接拒绝启动：首次部署请先跑 init-env.sh。
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 未设置，请先运行 deploy/scripts/init-env.sh}
+      # 没有密码直接拒绝启动：首次部署请先准备 deploy/env/<env>.env。
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 未设置}
       POSTGRES_DB: ${POSTGRES_DB:-hub}
       TZ: UTC
-    # 刻意不映射宿主机端口：数据库只允许 compose 网络内的 api 访问。
+    # 刻意不映射宿主机端口：数据库只允许 compose 网络内的 api / ops job 访问。
     # 需要在测试机上排查时：
-    #   docker compose --env-file deploy/env/staging.env -f deploy/docker-compose/compose.yaml exec db \
-    #     sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+    #   just logs staging db
+    #   docker compose -f deploy/docker-compose/compose.yaml \
+    #     --env-file deploy/env/staging.env exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
     volumes:
       # PostgreSQL 18 官方镜像的 PGDATA 是 /var/lib/postgresql/18/docker，
       # 挂载父目录才能持久化；17 及更早版本的 data 子目录也在其中。
@@ -53,7 +110,9 @@ services:
     stop_grace_period: 30s
 
   api:
-    image: ${IMAGE_PREFIX:-stellera}-hub-api:${RELEASE_VERSION:-local}
+    # 不可变发布 tag：justfile 每次发布用当前 git 提交（git describe）注入；
+    # 回滚时 `just RELEASE_VERSION=<历史 tag> rollback staging` 覆盖。
+    image: ${IMAGE_PREFIX:-stellera}-hub-api:${RELEASE_VERSION:?RELEASE_VERSION 未设置}
     build:
       # 构建上下文是服务目录；镜像由服务自带 Dockerfile 生成。
       context: ../../services/python-hub-api
@@ -63,29 +122,7 @@ services:
         # 固定 uv 版本（与 Dockerfile 默认值一致），避免 latest 漂移导致锁文件校验行为不一致。
         UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:0.13.6}
     restart: unless-stopped
-    environment:
-      APP_ENV: ${APP_ENV:-staging}
-      DEBUG: ${DEBUG:-false}
-      # 容器内通过服务名 db 访问 PostgreSQL；密码必须保持 URL 安全字符
-      # （init-env.sh 生成的是十六进制串，见 README「密码与 URL」）。
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-hub}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-hub}
-      JWT_SECRET: ${JWT_SECRET}
-      JWT_ISSUER: ${JWT_ISSUER:-stellera-hub}
-      JWT_AUDIENCE: ${JWT_AUDIENCE:-stellera-hub-web}
-      ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-900}
-      REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-604800}
-      # 同源部署（浏览器访问 web 的 /api 反代）其实不需要 CORS，
-      # 这里只放开测试入口，避免误配置成 *。
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
-      DOCS_ENABLED: ${DOCS_ENABLED:-false}
-      SEED_ADMIN_USERNAME: ${SEED_ADMIN_USERNAME:-admin}
-      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-admin12345}
-      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@example.com}
-      SEED_DEMO_USERS: ${SEED_DEMO_USERS:-true}
-      SEED_OPERATOR_PASSWORD: ${SEED_OPERATOR_PASSWORD:-operator12345}
-      SEED_VIEWER_PASSWORD: ${SEED_VIEWER_PASSWORD:-viewer12345}
-      SEED_ENTERPRISE_PASSWORD: ${SEED_ENTERPRISE_PASSWORD:-enterprise12345}
-      SEED_ENGINEER_PASSWORD: ${SEED_ENGINEER_PASSWORD:-engineer12345}
+    environment: *api-environment
     ports:
       # 默认只绑本机回环，便于 SSH 隧道调试；确需外部直连时把 API_BIND 改成 0.0.0.0。
       - "${API_BIND:-127.0.0.1}:${API_PORT:-8000}:8000"
@@ -109,7 +146,7 @@ services:
     stop_grace_period: 20s
 
   web:
-    image: ${IMAGE_PREFIX:-stellera}-hub-web:${RELEASE_VERSION:-local}
+    image: ${IMAGE_PREFIX:-stellera}-hub-web:${RELEASE_VERSION:?RELEASE_VERSION 未设置}
     build:
       # 前端构建上下文是 pnpm workspace 根（clients/web），不是 apps/hub。
       context: ../../clients/web
@@ -119,7 +156,7 @@ services:
         NGINX_IMAGE: ${NGINX_IMAGE:-nginx:1.29-alpine}
     restart: unless-stopped
     ports:
-      # 测试环境唯一对外开放的入口：http://<host>:${WEB_PORT}
+      # 唯一对外开放的入口：http://<host>:${WEB_PORT}
       - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:80"
     depends_on:
       api:
@@ -132,6 +169,80 @@ services:
       start_period: 10s
     logging: *default-logging
     stop_grace_period: 10s
+
+  # ============================================================
+  # 一次性任务（profiles: ["ops"]）
+  # 只在 `just migrate/seed/smoke/backup/restore/deploy/rollback` 时运行，
+  # 共享 api 镜像或 ops 镜像；跑完即退出（run --rm），不参与常驻 up。
+  # 两个 job（backup/restore）的镜像构建由 `--profile ops build` 完成。
+  # ============================================================
+
+  # Alembic 迁移：api 镜像的 entrypoint 子命令分发，不依赖宿主 alembic。
+  migrate:
+    profiles: ["ops"]
+    image: ${IMAGE_PREFIX:-stellera}-hub-api:${RELEASE_VERSION:?RELEASE_VERSION 未设置}
+    command: ["migrate"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *api-environment
+    logging: *default-logging
+
+  # 幂等种子数据（角色/权限/演示账号/演示订单）：api 镜像的 entrypoint 子命令。
+  seed:
+    profiles: ["ops"]
+    image: ${IMAGE_PREFIX:-stellera}-hub-api:${RELEASE_VERSION:?RELEASE_VERSION 未设置}
+    command: ["seed"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *api-environment
+    logging: *default-logging
+
+  # 冒烟测试：等 web healthy 后在 compose 网络内跑完整链路；失败非零退出，让发布中止。
+  smoke:
+    profiles: ["ops"]
+    image: ${IMAGE_PREFIX:-stellera}-hub-api:${RELEASE_VERSION:?RELEASE_VERSION 未设置}
+    command: ["smoke"]
+    depends_on:
+      web:
+        condition: service_healthy
+    environment: *smoke-environment
+    logging: *default-logging
+
+  # 数据库备份：逻辑全在 deploy/ops/backup.sh（镜像内），宿主不碰时间/文件/find/chmod。
+  backup:
+    profiles: ["ops"]
+    image: ${IMAGE_PREFIX:-stellera}-hub-ops:${OPS_IMAGE_TAG:-local}
+    build: *ops-build
+    entrypoint: ["/opt/ops/backup.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *pg-environment
+    # 以宿主用户身份写备份目录，避免 Linux 上产物变成 root:root；
+    # 备份目录不可写时 backup.sh 会给出明确提示（先 mkdir -p deploy/.state/backups）。
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    volumes:
+      # 相对路径按 compose 文件所在目录解析：../.state/backups = deploy/.state/backups。
+      - "${BACKUP_HOST_DIR:-../.state/backups}:/backups"
+    logging: *default-logging
+
+  # 数据库恢复：逻辑全在 deploy/ops/restore.sh（镜像内），
+  # RESTORE_FILE 由 just 通过 `docker compose run -e RESTORE_FILE=/backups/<文件名>` 传入。
+  restore:
+    profiles: ["ops"]
+    image: ${IMAGE_PREFIX:-stellera}-hub-ops:${OPS_IMAGE_TAG:-local}
+    build: *ops-build
+    entrypoint: ["/opt/ops/restore.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *pg-environment
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    volumes:
+      - "${BACKUP_HOST_DIR:-../.state/backups}:/backups"
+    logging: *default-logging
 
 volumes:
   pgdata:

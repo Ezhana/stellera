@@ -18,10 +18,9 @@ Thumbs.db
 .env.*
 !.env.example
 
-# ---------- Nx / Node ----------
-# Nx 的本地缓存、计算产物和 affected 基准信息都属于可重建的本地状态
+# ---------- Node / 构建产物 ----------
+# 依赖目录、构建产物、缓存都属于可重建的本地状态
 node_modules/
-.nx/
 dist/
 tmp/
 coverage/
@@ -34,12 +33,6 @@ out/
 # ---------- CodeGraph 本地索引 ----------
 # 代码检索索引由本机按需生成，随时可重建，不随仓库分发
 .codegraph/
-
-# ---------- 本地临时工具（不提交） ----------
-# 根目录按设计没有 package.json；本地为了跑 Nx 会临时 `npm init --yes && npm install nx`。
-# 这两个只是本地引导文件，不提交，避免悄悄破坏"根目录没有依赖清单"的约定
-/package.json
-/package-lock.json
 
 # ---------- Python ----------
 __pycache__/
@@ -87,7 +80,7 @@ build/
 
 # ---------- 部署（deploy/）----------
 # 真实部署变量含数据库密码与 JWT_SECRET，只提交 *.example 模板；
-# .state/ 保存发布版本、数据库备份等主机本地数据，不随仓库分发。
+# .state/ 保存数据库备份等测试机本地数据，不随仓库分发。
 deploy/env/*.env
 !deploy/env/*.env.example
 deploy/.state/

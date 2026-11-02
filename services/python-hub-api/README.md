@@ -37,11 +37,10 @@ services/python-hub-api/
 │   └── scripts/seed.py         # 幂等种子数据（角色/权限/演示账号/FDE 演示订单）
 ├── casbin/model.conf           # 只放模型，policy 不落 CSV
 ├── migrations/                 # Alembic（异步 env.py + 0001 初始迁移 + 0002 FDE 订单）
-├── scripts/entrypoint.sh       # 容器入口：migrate -> seed -> exec
+├── scripts/entrypoint.sh       # 容器入口：serve/migrate/seed/smoke 子命令
 ├── tests/                      # SQLite + TestClient，不依赖 Docker/PG
 ├── alembic.ini
-├── Dockerfile                  # python:3.13-slim + uv + 非 root
-└── project.json                # Nx targets: lint/test/typecheck/build/serve
+└── Dockerfile                  # python:3.13-slim + uv + 非 root
 ```
 
 ## 快速开始（本地）
@@ -74,7 +73,8 @@ docker compose -f ../../infra/compose.yaml up -d db
 ## 配置
 
 所有配置经 `app/core/config.py` 的 `Settings` 读取，变量名与
-`infra/compose.yaml`、`.env.example` 一致。
+`infra/compose.yaml`、`.env.example` 一致；配置在启动时由 Pydantic Settings 校验，
+不合规直接 fail-fast（例如非 development 环境仍使用示例 `JWT_SECRET`）。
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -268,15 +268,17 @@ uv run pytest
 以及 FDE 订单全流程（大厅过滤/分页、发布、认领、工作日志、完成/取消、我发布的、
 管理员跨角色操作、WebSocket 鉴权与 `order.created` / `order.updated` 推送）。
 
-也可以走 Nx（从仓库根目录）：
+也可以从仓库根目录用 `just`（薄转发，等价）：
 
 ```bash
-npx nx run python-hub-api:lint
-npx nx run python-hub-api:test
-npx nx run python-hub-api:typecheck
-npx nx run python-hub-api:build      # uv build，产物在 dist/
-npx nx run python-hub-api:serve
+just backend-lint
+just backend-test
+just backend-typecheck
+just backend-build      # uv build，产物在 dist/
+just backend-serve
 ```
+
+根目录没有 `package.json` 与 lockfile，不需要 `npm install`；`just` 只把命令转发到本目录，实际工具链仍是 uv。
 
 ## Docker
 
@@ -285,9 +287,11 @@ docker build -t stellera-hub-api .
 docker run --rm -p 8000:8000 --env-file .env stellera-hub-api
 ```
 
-镜像基于 `python:3.13-slim`，用 uv 安装依赖，非 root（uid 10001）运行；
-`scripts/entrypoint.sh` 会先 `alembic upgrade head`、再幂等 seed，最后 exec 启动命令
-（`fastapi run --host 0.0.0.0 --port 8000`，CLI 会自动发现 `app/main.py` 里的 app）。
+镜像基于 `python:3.13-slim`，用 uv 安装依赖，非 root（uid 10001）运行。
+`scripts/entrypoint.sh` 支持 `serve`（默认：先 `alembic upgrade head`、再幂等 seed，最后
+exec `fastapi run --host 0.0.0.0 --port 8000`，CLI 自动发现 `app/main.py` 里的 app）、
+`migrate`（只跑迁移）、`seed`（只写种子）与 `smoke`（冒烟检查）子命令，其余参数透传执行；
+一次性任务复用同一镜像，例如 `docker compose run --rm migrate` / `--rm seed` / `--rm smoke`。
 
 如果 Docker Hub 不可直连，可通过 build arg 指定镜像代理（默认仍是官方 tag）：
 
@@ -303,4 +307,5 @@ docker build --build-arg PYTHON_IMAGE=registry.example.com/python:3.13-slim .
 - 前端在 `clients/web`，通过 `/api/v1/auth/*`、`/api/v1/fde/*`（含 `/api/v1/fde/ws` 实时推送）
   与 `/health/ready` 对接；
 - `infra/` 负责本地 Docker 编排，`deploy/` 负责发布环境；
-- 本服务是 Nx 项目 `python-hub-api`，根 CI 用 `nx affected` 跑 lint/test/build/typecheck。
+- CI 直接在本服务目录跑原生命令：`uv run ruff check .`、`uv run ruff format --check .`、
+  `uv run ty check app tests`、`uv run pytest` 和 `uv build`，不依赖根目录工具链。

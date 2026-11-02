@@ -50,5 +50,8 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=25s --retries=10 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"
 
 ENTRYPOINT ["/app/scripts/entrypoint.sh"]
+# 入口脚本的子命令分发：serve（默认，迁移 + seed + 启动 API）、migrate、seed、smoke；
+# 其它参数透传执行。一次性任务复用同一镜像，例如
+# `docker compose run --rm migrate` / `--rm seed` / `--rm smoke`。
 # fastapi CLI 接受「文件/目录路径」而不是 import 字符串；不传路径时自动发现 app/main.py 里的 app。
-CMD ["fastapi", "run", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["serve"]
