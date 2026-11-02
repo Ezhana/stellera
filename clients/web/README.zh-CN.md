@@ -3,8 +3,9 @@
 [English](./README.md) | 简体中文
 
 > **当前所在位置：** 本目录是 Stellera monorepo 的 `clients/web` —— 与根目录同属一个 Git 仓库，
-> 没有嵌套仓库；根 Nx 工作区以项目名 `web` 调度它（见 `clients/web/project.json` 与
-> `clients/README.md`）。下面的 pnpm workspace、lockfile 与共享配置自成一体，目录单独使用也能工作；
+> 没有嵌套仓库；根目录通过 `just` 驱动它（见 `clients/README.md`）：在仓库根目录跑
+> `just frontend-install` / `just frontend-dev` 等 recipe，或在本目录直接跑下面的 pnpm 命令。
+> 下面的 pnpm workspace、lockfile 与共享配置自成一体，目录单独使用也能工作（不依赖根目录工具）；
 > `apps/hub` 是用本模板生成的 Vue 3 + Vite 应用。
 
 由 `frontend-template-source` 生成的 pnpm workspace 启动模板。模板本身默认**不包含应用**；通过
@@ -143,7 +144,9 @@ export type AppTheme = (typeof themeRegistry.themes)[number]
 ## CI
 
 CI 由 Stellera monorepo 根目录的 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) 负责：
-先 `pnpm install --frozen-lockfile` 安装本工作区，再跑 `nx affected -t lint test build`。并入
+先 `pnpm install --frozen-lockfile` 安装本工作区，再直接跑本项目自己的 pnpm 命令：`pnpm lint`、
+`pnpm -r --if-present run test`、`pnpm build` 和
+`pnpm -r --filter "./apps/*" --if-present run type-check`。CI 不经过根目录的任务编排层。并入
 monorepo 时删掉了模板自带的 workflow —— GitHub 只读取仓库根目录的 `.github/workflows`。本地等价的
 检查是 `pnpm format:check`、`pnpm lint` 和 `pnpm build`。
 

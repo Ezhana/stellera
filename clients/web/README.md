@@ -3,10 +3,12 @@
 English | [简体中文](./README.zh-CN.md)
 
 > **Where this lives:** this directory is `clients/web` of the Stellera monorepo — one Git
-> repository, no nested repo. The root Nx workspace schedules it as project `web` (see
-> `clients/web/project.json` and `clients/README.md`). The pnpm workspace, lockfile and shared
-> configs below are self-contained, so the directory still works on its own. `apps/hub` is the
-> application generated from this template (Vue 3 + Vite).
+> repository, no nested repo. The monorepo root drives it through `just` (see
+> `clients/README.md`): run `just frontend-install` / `just frontend-dev` / `just frontend-build`
+> / `just frontend-lint` / `just frontend-typecheck` from the repo root, or run the `pnpm`
+> commands below from this directory. The pnpm workspace, lockfile and shared configs below are
+> self-contained, so the directory works on its own without any root-level tooling. `apps/hub` is
+> the application generated from this template (Vue 3 + Vite).
 
 A pnpm workspace starter generated from `frontend-template-source`. The template intentionally
 ships **no application by default**: after cloning or using **Use this template**, choose React or
@@ -157,9 +159,12 @@ See the npm package documentation for the token contract, theme model and runtim
 ## CI
 
 CI is owned by the Stellera monorepo root: [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)
-installs this workspace with `pnpm install --frozen-lockfile` and then runs
-`nx affected -t lint test build`. The template's standalone workflow was removed when the workspace
-was merged into the monorepo — GitHub only reads the root `.github/workflows` of a repository.
+installs this workspace with `pnpm install --frozen-lockfile` and then runs this project's own pnpm
+commands: `pnpm lint`, `pnpm -r --if-present run test`, `pnpm build` and
+`pnpm -r --filter "./apps/*" --if-present run type-check`. CI calls these commands directly
+instead of going through a root-level task runner. The template's standalone workflow was removed
+when the workspace was merged into the monorepo — GitHub only reads the root
+`.github/workflows` of a repository.
 Equivalent local checks: `pnpm format:check`, `pnpm lint` and `pnpm build`.
 
 ## License
