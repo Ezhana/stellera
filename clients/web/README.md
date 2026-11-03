@@ -4,9 +4,9 @@ English | [简体中文](./README.zh-CN.md)
 
 > **Where this lives:** this directory is `clients/web` of the Stellera monorepo — one Git
 > repository, no nested repo. The pnpm workspace, lockfile and shared configs below are
-> self-contained; run the `pnpm` commands below from this directory. The monorepo root's `just`
-> only drives the Docker deploy (`deploy/compose.yaml`). `apps/hub` is the application generated
-> from this template (Vue 3 + Vite).
+> self-contained; run the `pnpm` commands below from this directory, or `just web` from the repo
+> root. `just up` drives the Docker deploy (`deploy/compose.yaml`). `apps/hub` is the application
+> generated from this template (Vue 3 + Vite).
 
 A pnpm workspace starter generated from `frontend-template-source`. The template intentionally
 ships **no application by default**: after cloning or using **Use this template**, choose React or

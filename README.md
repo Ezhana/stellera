@@ -80,37 +80,47 @@ new-api 数据在 `infra/new-api/data`。
 ## 本地开发（热更新）
 
 环境要求：Python 3.13（见 `services/hub-api/.python-version`）、uv、Node.js 24（见 `clients/web/package.json`
-的 `engines`；pnpm 由 corepack 按 `packageManager` 字段自动取用）、Docker（只用它的数据库）。
+的 `engines`；pnpm 由 corepack 按 `packageManager` 字段自动取用）、Docker（只用于本地依赖）。
+
+依赖初始化（首次，在仓库根目录）：
 
 ```bash
-# 本地依赖：PostgreSQL（含 new-api、hub 两个库）+ Redis + new-api
 cp infra/.env.example infra/.env
-docker compose -f infra/compose.yaml up -d
-```
+docker compose -f infra/compose.yaml up -d    # PostgreSQL（new-api、hub 库）+ Redis + new-api
 
-后端：<http://127.0.0.1:8000>（热更新，Swagger 在 `/docs`）。`DATABASE_URL` 的用户名/密码
-要与 `infra/.env` 一致（默认 `stellera` / `stellera`）。
-
-```bash
 cd services/hub-api
-cp .env.example .env          # 按 infra/.env 改 DATABASE_URL
+cp .env.example .env          # DATABASE_URL 改成 infra/.env 里的用户/密码（默认 stellera / stellera）
 uv sync
 uv run python -m app.scripts.init --demo
-uv run fastapi dev
 ```
 
-前端：<http://127.0.0.1:5173>，`/api` 代理到 8000。
+前端依赖（首次）：
 
 ```bash
 cd clients/web
-pnpm install && pnpm dev
+pnpm install
+```
+
+之后用 `just` 启动本地开发服务器（热更新）：
+
+```bash
+just api    # 后端 http://127.0.0.1:8000，Swagger 在 /docs
+just web    # 前端 http://localhost:5173，/api 代理到 8000
+just dev    # 前后端并行，Ctrl-C 一起退出
 ```
 
 ## just 命令
 
-`just` 是仓库唯一编排入口：只做薄壳转发，部署编排在 `deploy/compose.yaml`。不带参数运行 `just` 会列出全部 recipe。
+`just` 是仓库唯一编排入口：只做薄壳转发——本地开发转发 uv / pnpm，部署转发 `deploy/compose.yaml`。
+不带参数运行 `just` 会列出全部 recipe。
 
 ```bash
+# 本地开发（uv / pnpm）
+just api                    # 后端热更新，127.0.0.1:8000
+just web                    # 前端 Vite，localhost:5173
+just dev                    # 前后端并行
+
+# Docker 部署（deploy/compose.yaml）
 just up [service...]        # 构建镜像并后台启动（不带参数=全部；如 just up api）
 just down                   # 停止并删除容器（保留数据卷）
 just restart [service...]   # 重启服务
@@ -120,8 +130,8 @@ just build [service...]     # 只构建镜像
 just gen-secret [bytes]     # 生成随机十六进制密钥（默认 32 字节）
 ```
 
-帮助类 recipe 直接转发 compose，例如 `just ps` 等价于
-`docker compose -f deploy/compose.yaml --env-file deploy/.env ps`。
+`just` 只做薄壳转发：本地开发直接调用 uv / pnpm，部署直接转发 compose（例如 `just ps` 等价于
+`docker compose -f deploy/compose.yaml --env-file deploy/.env ps`）。
 
 ## 目录
 

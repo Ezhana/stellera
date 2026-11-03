@@ -57,6 +57,8 @@ uv run python -m app.scripts.init --demo   # 迁移 + RBAC/管理员 + 演示数
 uv run fastapi dev            # 自动发现 app/main.py，http://127.0.0.1:8000
 ```
 
+仓库根目录执行 `just api` 等价于最后一步（热更新，同一份 `.env` 与虚拟环境）。
+
 只起数据库再本地跑后端（需要 Docker，使用 compose 里可选的本地 PostgreSQL）：
 
 ```bash

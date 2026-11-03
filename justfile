@@ -1,6 +1,25 @@
 default:
     @just --list
 
+# 后端本地启动（热更新）：http://127.0.0.1:8000
+[working-directory('services/hub-api')]
+api:
+    uv run fastapi dev --host 0.0.0.0 --port 8000
+
+# 前端本地启动：http://localhost:5173，/api 代理到 8000
+[working-directory('clients/web')]
+web:
+    pnpm --filter hub dev
+
+# 前后端并行本地启动（Ctrl-C 一起退出）
+dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    trap 'kill 0' EXIT INT TERM
+    uv run --directory services/hub-api fastapi dev --host 0.0.0.0 --port 8000 &
+    pnpm --dir clients/web --filter hub dev &
+    wait
+
 compose := "docker compose -f deploy/compose.yaml --env-file deploy/.env"
 python_image := env_var_or_default("PYTHON_IMAGE", "python:3.13-slim")
 
