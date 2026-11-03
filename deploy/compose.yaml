@@ -1,0 +1,77 @@
+name: ${COMPOSE_PROJECT_NAME:-stellera}
+
+include:
+  - ../infra/compose.yaml
+
+x-api-build: &api-build
+  context: ../services/hub-api
+  args:
+    PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.13-slim}
+    UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:latest}
+    UV_DEFAULT_INDEX: ${UV_DEFAULT_INDEX:-}
+    UV_EXTRA_INDEX_URL: ${UV_EXTRA_INDEX_URL:-}
+    UV_INSECURE_HOST: ${UV_INSECURE_HOST:-}
+
+x-api-environment: &api-environment
+  APP_ENV: ${APP_ENV:-staging}
+  DOCS_ENABLED: ${DOCS_ENABLED:-false}
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-stellera}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 未设置}@postgres:5432/hub
+  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 未设置}
+  JWT_ISSUER: ${JWT_ISSUER:-stellera-hub}
+  JWT_AUDIENCE: ${JWT_AUDIENCE:-stellera-hub-web}
+  ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-900}
+  REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-604800}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
+
+services:
+  api:
+    image: ${API_IMAGE:-hub-api}:${IMAGE_TAG:-latest}
+    build: *api-build
+    environment: *api-environment
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  init:
+    image: ${API_IMAGE:-hub-api}:${IMAGE_TAG:-latest}
+    build: *api-build
+    command: ["sh", "-c", "python -m app.scripts.init ${INIT_ARGS:-}"]
+    environment:
+      <<: *api-environment
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin12345}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  web:
+    image: ${WEB_IMAGE:-hub-web}:${IMAGE_TAG:-latest}
+    build:
+      context: ../clients/web
+      args:
+        APP: hub
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
+        NGINX_IMAGE: ${NGINX_IMAGE:-nginx:1.29-alpine}
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+        COREPACK_NPM_REGISTRY: ${COREPACK_NPM_REGISTRY:-}
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1/healthz >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s

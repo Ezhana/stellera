@@ -31,7 +31,7 @@ x-seed-environment: &seed-environment
 services:
   api:
     build: *service-build
-    image: "${API_IMAGE:-stellera-hub-api}:${IMAGE_TAG:-local}"
+    image: "${API_IMAGE:-hub-api}:${IMAGE_TAG:-local}"
     environment: *service-environment
     ports:
       - "${API_BIND:-127.0.0.1}:${API_PORT:-8000}:${PORT:-8000}"
@@ -46,7 +46,7 @@ services:
   # 演示数据：docker compose run --rm migrate python -m app.scripts.init --demo
   migrate:
     build: *service-build
-    image: "${API_IMAGE:-stellera-hub-api}:${IMAGE_TAG:-local}"
+    image: "${API_IMAGE:-hub-api}:${IMAGE_TAG:-local}"
     command: ["python", "-m", "app.scripts.init"]
     environment: *seed-environment
     depends_on:

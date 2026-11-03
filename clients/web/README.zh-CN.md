@@ -3,9 +3,8 @@
 [English](./README.md) | 简体中文
 
 > **当前所在位置：** 本目录是 Stellera monorepo 的 `clients/web` —— 与根目录同属一个 Git 仓库，
-> 没有嵌套仓库；根目录通过 `just` 驱动它（见 `clients/README.md`）：在仓库根目录跑
-> `just frontend-install` / `just frontend-dev` 等 recipe，或在本目录直接跑下面的 pnpm 命令。
-> 下面的 pnpm workspace、lockfile 与共享配置自成一体，目录单独使用也能工作（不依赖根目录工具）；
+> 没有嵌套仓库；下面的 pnpm workspace、lockfile 与共享配置自成一体，直接在本目录跑下面的 pnpm
+> 命令即可（根目录的 `just` 只负责 Docker 部署，见 `deploy/compose.yaml`）。
 > `apps/hub` 是用本模板生成的 Vue 3 + Vite 应用。
 
 由 `frontend-template-source` 生成的 pnpm workspace 启动模板。模板本身默认**不包含应用**；通过

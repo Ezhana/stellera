@@ -1,7 +1,7 @@
 # CI：按项目各自的原生工具链跑 lint / test / build / typecheck。
 #
 # 没有根 package.json，也不需要根级任务调度器：
-#   - 后端 services/python-hub-api 用 uv（版本跟随服务内 .python-version 与 uv.lock）；
+#   - 后端 services/hub-api 用 uv（版本跟随服务内 .python-version 与 uv.lock）；
 #   - 前端 clients/web 用 pnpm workspace（Node 版本来自 package.json 的 engines，
 #     pnpm 版本来自 packageManager 字段，由 corepack 自动取用）。
 # 两个 job 并行执行；加新项目就是加一个 job，不需要任何根级调度器。
@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: services/python-hub-api
+        working-directory: services/hub-api
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,21 +46,21 @@ jobs:
           uv --version
           python --version
 
-      # 与 just backend-lint 等价。
+      # 后端 lint：ruff check + format check。
       - name: Lint (ruff check + format check)
         run: |
           uv run ruff check .
           uv run ruff format --check .
 
-      # 与 just backend-typecheck 等价。
+      # 后端类型检查：ty。
       - name: Typecheck (ty)
         run: uv run ty check app tests
 
-      # 与 just backend-test 等价（SQLite，不依赖 Docker）。
+      # 后端测试（SQLite，不依赖 Docker）。
       - name: Test (pytest)
         run: uv run pytest
 
-      # 与 just backend-build 等价，产物在服务内 dist/。
+      # 后端构建，产物在服务内 dist/。
       - name: Build (uv build)
         run: uv build
 
@@ -92,18 +92,18 @@ jobs:
           node --version
           pnpm --version
 
-      # 与 just frontend-lint 等价。
+      # 前端 lint。
       - name: Lint
         run: pnpm lint
 
-      # 与 just 的测试入口一致：workspace 内各 app 有自己的 test 脚本时自动执行。
+      # workspace 内各 app 有自己的 test 脚本时自动执行。
       - name: Test
         run: pnpm -r --if-present run test
 
-      # 与 just frontend-typecheck 等价（vue-tsc）。
+      # 前端类型检查（vue-tsc）。
       - name: Typecheck
         run: pnpm -r --filter "./apps/*" --if-present run type-check
 
-      # 与 just frontend-build 等价，产物在 apps/hub/dist。
+      # 前端构建，产物在 apps/hub/dist。
       - name: Build
         run: pnpm build

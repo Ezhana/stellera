@@ -1,4 +1,4 @@
-# Stellera Hub API（python-hub-api）
+# Stellera Hub API（hub-api）
 
 Stellera Hub 的后端服务：**FastAPI + PostgreSQL + Authlib JWT + pycasbin RBAC**。
 
@@ -21,7 +21,7 @@ Stellera Hub 的后端服务：**FastAPI + PostgreSQL + Authlib JWT + pycasbin R
 ## 目录结构
 
 ```text
-services/python-hub-api/
+services/hub-api/
 ├── app/
 │   ├── main.py                 # create_app 工厂 + lifespan（建引擎、投影 Casbin）
 │   ├── db.py                   # async engine / session factory
@@ -50,7 +50,7 @@ services/python-hub-api/
 前置：Python 3.13（见 `.python-version`）、[uv](https://docs.astral.sh/uv/)。
 
 ```bash
-cd services/python-hub-api
+cd services/hub-api
 cp .env.example .env          # 按需修改 DATABASE_URL / JWT_SECRET
 uv sync
 uv run python -m app.scripts.init --demo   # 迁移 + RBAC/管理员 + 演示数据
@@ -270,29 +270,17 @@ uv run pytest
 以及 FDE 订单全流程（大厅过滤/分页、发布、认领、工作日志、完成/取消、我发布的、
 管理员跨角色操作、WebSocket 鉴权与 `order.created` / `order.updated` 推送）。
 
-也可以从仓库根目录用 `just`（薄转发，等价）：
-
-```bash
-just backend-lint
-just backend-test
-just backend-typecheck
-just backend-build      # uv build，产物在 dist/
-just backend-serve
-```
-
-根目录没有 `package.json` 与 lockfile，不需要 `npm install`；`just` 只把命令转发到本目录，实际工具链仍是 uv。
-
 ## Docker
 
 镜像只负责运行 API：uv 安装依赖、`fastapi run` 启动，不含迁移/种子逻辑。
 数据库初始化是独立的一次性 job，二者共用同一镜像：
 
 ```bash
-docker build -t stellera-hub-api .
+docker build -t hub-api .
 # 初始化/迁移（幂等）：DATABASE_URL 需指向容器可达的数据库；追加 --demo 写入演示数据
-docker run --rm --env-file .env stellera-hub-api python -m app.scripts.init
+docker run --rm --env-file .env hub-api python -m app.scripts.init
 # 启动 API；PORT / WEB_CONCURRENCY 可覆盖默认 8000 / 1
-docker run --rm -p 8000:8000 --env-file .env stellera-hub-api
+docker run --rm -p 8000:8000 --env-file .env hub-api
 ```
 
 `compose.yml` 是不依赖顶层编排的最小运行单元：`migrate` job 成功退出后 `api` 才启动，
@@ -325,7 +313,7 @@ docker build \
 
 - 前端在 `clients/web`，通过 `/api/v1/auth/*`、`/api/v1/fde/*`（含 `/api/v1/fde/ws` 实时推送）
   与 `/health/ready` 对接；
-- `infra/` 负责基础设施编排；本服务的 `compose.yml` 可被上层 compose `include`，
-  迁移/初始化命令统一为 `python -m app.scripts.init`；
+- `infra/` 提供 postgres / redis / new-api；`deploy/compose.yaml` include `infra/` 并追加
+  本服务的 `api` / `init` 与前端 `web`，迁移/初始化命令统一为 `python -m app.scripts.init`；
 - CI 直接在本服务目录跑原生命令：`uv run ruff check .`、`uv run ruff format --check .`、
   `uv run ty check app tests`、`uv run pytest` 和 `uv build`，不依赖根目录工具链。

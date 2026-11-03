@@ -79,8 +79,4 @@ build/
 # 不能因为全局的 build/、target/、bin/ 模式而顺手把 deploy/ 整个忽略掉。
 
 # ---------- 部署（deploy/）----------
-# 真实部署变量含数据库密码与 JWT_SECRET，只提交 *.example 模板；
-# .state/ 保存数据库备份等测试机本地数据，不随仓库分发。
-deploy/env/*.env
-!deploy/env/*.env.example
-deploy/.state/
+# 真实部署变量 deploy/.env 由上面的 .env 规则忽略，只提交 .env.example。

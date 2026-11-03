@@ -1,7 +1,7 @@
 /**
  * 测试环境演示账号。
  *
- * 弱口令与后端种子数据保持一致（见 `services/python-hub-api/app/scripts/seed.py`），
+ * 弱口令与后端种子数据保持一致（见 `services/hub-api/app/scripts/seed.py`），
  * 便于测试人员在登录页一键填入。仅用于开发/测试环境（含 deploy/ 的 staging），
  * 发布到生产前必须移除本区块或改成真实的账号开通指引。
  */
