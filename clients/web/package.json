@@ -32,6 +32,7 @@
     "lint-staged": "17.5.1",
     "prettier": "catalog:",
     "simple-git-hooks": "2.14.0",
+    "turbo": "2.11.10",
     "typescript": "catalog:"
   }
 }
