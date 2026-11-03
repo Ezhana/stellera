@@ -50,7 +50,7 @@ const inProgressOrder = buildOrderView({
   publisherName: 'Luna',
   engineerId: '9',
   engineerName: '工程师阿远',
-  engineerCertification: 'engineer',
+  engineerCertifications: ['realname', 'engineer'],
   createdAt: '2026-11-01T00:00:00.000Z',
 })
 
@@ -93,7 +93,7 @@ async function mountPage(): Promise<{ wrapper: VueWrapper; router: Router }> {
         id: '9',
         username: 'engineer',
         displayName: '工程师阿远',
-        certification: 'engineer',
+        certifications: ['realname', 'engineer'],
         roles: [{ key: 'engineer', label: '工程师', tone: 'success' }],
       }),
       remember: false,
@@ -106,6 +106,9 @@ async function mountPage(): Promise<{ wrapper: VueWrapper; router: Router }> {
     history: createMemoryHistory(),
     routes: [
       { path: '/login', name: 'login', component: EmptyView },
+      { path: '/profile', name: 'profile', component: EmptyView },
+      { path: '/profiles/:id', name: 'public-profile', component: EmptyView },
+      { path: '/fde/orders/:id', name: 'fde-order-detail', component: EmptyView },
       { path: '/intro', name: 'intro', component: EmptyView },
       { path: '/fde/hall', name: 'fde-hall', component: EmptyView },
       { path: '/fde/published', name: 'fde-published', component: EmptyView },

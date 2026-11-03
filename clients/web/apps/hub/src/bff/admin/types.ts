@@ -1,4 +1,8 @@
-import type { AdminRedeemCodeStatus } from '@/models'
+import type {
+  AdminRedeemCodeStatus,
+  CertificationApplicationStatus,
+  CertificationApplicationType,
+} from '@/models'
 
 /** Page-facing admin inputs (camelCase, already validated by the page). */
 export interface AdminUserFilter {
@@ -8,15 +12,11 @@ export interface AdminUserFilter {
   pageSize?: number
 }
 
-/** Certification value accepted by the PATCH endpoint; `none` revokes the role. */
-export type AdminCertificationInput = 'none' | 'enterprise' | 'engineer'
-
-/** Payload for editing a user's profile/status or granting a certification. */
+/** Payload for editing a user's nickname/email or enable state; roles are never edited directly. */
 export interface UpdateAdminUserInput {
-  fullName?: string
+  nickname?: string
   email?: string | null
   isActive?: boolean
-  certification?: AdminCertificationInput
 }
 
 /** Payload for an admin balance adjustment; amounts travel in integer cents. */
@@ -28,6 +28,15 @@ export interface AdminWalletAdjustmentInput {
 
 export interface AdminRedeemCodeFilter {
   status?: AdminRedeemCodeStatus | 'all'
+  q?: string
+  page?: number
+  pageSize?: number
+}
+
+/** Filter for the certification review console. */
+export interface AdminCertificationApplicationFilter {
+  status?: CertificationApplicationStatus | 'all'
+  type?: CertificationApplicationType | 'all'
   q?: string
   page?: number
   pageSize?: number

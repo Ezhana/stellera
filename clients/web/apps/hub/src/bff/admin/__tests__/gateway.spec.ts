@@ -5,6 +5,8 @@ import { request } from '@/lib/http'
 import { BffError } from '../../errors'
 import { HttpAdminGateway } from '../gateway'
 import {
+  buildAdminCertificationApplicationDto,
+  buildAdminCertificationApplicationListDto,
   buildAdminRoleListDto,
   buildAdminSettingsDto,
   buildAdminUserDto,
@@ -70,20 +72,18 @@ describe('HttpAdminGateway', () => {
     mockedRequest.mockResolvedValueOnce(buildAdminUserDto({ is_active: false }))
 
     await gateway.updateUser('token-1', '7', {
-      fullName: 'Luna Chen',
+      nickname: 'Luna Chen',
       email: 'luna@example.com',
       isActive: false,
-      certification: 'engineer',
     })
 
     expect(mockedRequest).toHaveBeenCalledWith('/admin/users/7', {
       method: 'PATCH',
       token: 'token-1',
       body: {
-        full_name: 'Luna Chen',
+        nickname: 'Luna Chen',
         email: 'luna@example.com',
         is_active: false,
-        certification: 'engineer',
       },
     })
   })
@@ -171,6 +171,59 @@ describe('HttpAdminGateway', () => {
       token: 'token-1',
       body: { status: 'disabled' },
     })
+  })
+
+  it('lists certification applications with status/type/keyword pagination', async () => {
+    mockedRequest.mockResolvedValueOnce(buildAdminCertificationApplicationListDto())
+
+    await gateway.listCertificationApplications('token-1', {
+      status: 'pending',
+      type: 'enterprise',
+      q: ' 远山 ',
+      page: 2,
+      pageSize: 20,
+    })
+
+    const path = mockedRequest.mock.calls[0]?.[0] ?? ''
+    const query = queryOf(path)
+    expect(path.startsWith('/admin/certification-applications?')).toBe(true)
+    expect(query.get('status')).toBe('pending')
+    expect(query.get('type')).toBe('enterprise')
+    expect(query.get('q')).toBe('远山')
+    expect(query.get('page')).toBe('2')
+    expect(query.get('page_size')).toBe('20')
+  })
+
+  it('omits the status/type filters for the "all" values', async () => {
+    mockedRequest.mockResolvedValueOnce(buildAdminCertificationApplicationListDto())
+
+    await gateway.listCertificationApplications('token-1', { status: 'all', type: 'all' })
+
+    const query = queryOf(mockedRequest.mock.calls[0]?.[0] ?? '')
+    expect(query.has('status')).toBe(false)
+    expect(query.has('type')).toBe(false)
+  })
+
+  it('approves and rejects certification applications with an optional note', async () => {
+    mockedRequest
+      .mockResolvedValueOnce(
+        buildAdminCertificationApplicationDto({ status: 'approved', review_note: '材料齐全' }),
+      )
+      .mockResolvedValueOnce(buildAdminCertificationApplicationDto({ status: 'rejected' }))
+
+    await gateway.approveCertificationApplication('token-1', '11', '材料齐全')
+    await gateway.rejectCertificationApplication('token-1', '11')
+
+    expect(mockedRequest).toHaveBeenNthCalledWith(
+      1,
+      '/admin/certification-applications/11/approve',
+      { method: 'POST', token: 'token-1', body: { note: '材料齐全' } },
+    )
+    expect(mockedRequest).toHaveBeenNthCalledWith(
+      2,
+      '/admin/certification-applications/11/reject',
+      { method: 'POST', token: 'token-1', body: {} },
+    )
   })
 
   it('patches settings with the key/value map', async () => {

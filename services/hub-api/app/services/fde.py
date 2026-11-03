@@ -69,11 +69,12 @@ class OrderAggregate:
 
 @dataclass(frozen=True)
 class OrderDetail:
-    """订单详情：订单、日志数与日志列表（按时间正序）。"""
+    """订单详情：订单、日志数与日志列表、全部申请（均按时间正序）。"""
 
     order: FdeOrder
     work_log_count: int
     logs: tuple[FdeOrderLog, ...]
+    applications: tuple[FdeOrderApplication, ...]
 
 
 @dataclass(frozen=True)
@@ -350,7 +351,7 @@ async def _list_page(
 
 
 async def get_order_detail(session: AsyncSession, order_id: int) -> OrderDetail:
-    """订单详情：附带工作日志（最旧在前）。"""
+    """订单详情：附带工作日志与全部申请（形成审批历史），均按时间正序。"""
     order = (
         await session.execute(
             select(FdeOrder)
@@ -358,13 +359,21 @@ async def get_order_detail(session: AsyncSession, order_id: int) -> OrderDetail:
             .options(
                 *_order_options(),
                 selectinload(FdeOrder.logs).selectinload(FdeOrderLog.author),
+                selectinload(FdeOrder.applications).selectinload(FdeOrderApplication.order),
+                selectinload(FdeOrder.applications).selectinload(FdeOrderApplication.applicant),
+                selectinload(FdeOrder.applications).selectinload(FdeOrderApplication.reviewer),
             )
         )
     ).scalar_one_or_none()
     if order is None:
         raise FdeNotFoundError("订单不存在")
     logs = tuple(order.logs)
-    return OrderDetail(order=order, work_log_count=len(logs), logs=logs)
+    return OrderDetail(
+        order=order,
+        work_log_count=len(logs),
+        logs=logs,
+        applications=tuple(order.applications),
+    )
 
 
 async def create_order(

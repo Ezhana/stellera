@@ -5,6 +5,8 @@ import { request } from '@/lib/http'
 
 import { BffError } from '../errors'
 import {
+  adminCertificationApplicationDtoSchema,
+  adminCertificationApplicationListDtoSchema,
   adminRedeemCodeDtoSchema,
   adminRedeemCodeListDtoSchema,
   adminRoleListDtoSchema,
@@ -14,6 +16,8 @@ import {
   createRedeemCodeResponseDtoSchema,
   type AdminRedeemCodeDto,
   type AdminRedeemCodeListDto,
+  type AdminCertificationApplicationDto,
+  type AdminCertificationApplicationListDto,
   type AdminRoleListDto,
   type AdminSettingsDto,
   type AdminUserDto,
@@ -21,6 +25,7 @@ import {
   type CreateRedeemCodeResponseDto,
 } from './dto'
 import type {
+  AdminCertificationApplicationFilter,
   AdminRedeemCodeFilter,
   AdminUserFilter,
   AdminWalletAdjustmentInput,
@@ -71,6 +76,20 @@ export interface AdminGateway {
   ): Promise<AdminRedeemCodeDto>
   getSettings(token: string): Promise<AdminSettingsDto>
   updateSettings(token: string, values: Record<string, string>): Promise<AdminSettingsDto>
+  listCertificationApplications(
+    token: string,
+    filter?: AdminCertificationApplicationFilter,
+  ): Promise<AdminCertificationApplicationListDto>
+  approveCertificationApplication(
+    token: string,
+    id: string,
+    note?: string | null,
+  ): Promise<AdminCertificationApplicationDto>
+  rejectCertificationApplication(
+    token: string,
+    id: string,
+    note?: string | null,
+  ): Promise<AdminCertificationApplicationDto>
 }
 
 export class HttpAdminGateway implements AdminGateway {
@@ -93,10 +112,9 @@ export class HttpAdminGateway implements AdminGateway {
 
   async updateUser(token: string, id: string, input: UpdateAdminUserInput): Promise<AdminUserDto> {
     const body: Record<string, unknown> = {}
-    if (input.fullName !== undefined) body.full_name = input.fullName
+    if (input.nickname !== undefined) body.nickname = input.nickname
     if (input.email !== undefined) body.email = input.email
     if (input.isActive !== undefined) body.is_active = input.isActive
-    if (input.certification !== undefined) body.certification = input.certification
 
     const raw = await request<unknown>(`/admin/users/${encodeId(id)}`, {
       method: 'PATCH',
@@ -166,6 +184,53 @@ export class HttpAdminGateway implements AdminGateway {
       body: { status },
     })
     return parseDto(adminRedeemCodeDtoSchema, raw)
+  }
+
+  async listCertificationApplications(
+    token: string,
+    filter?: AdminCertificationApplicationFilter,
+  ): Promise<AdminCertificationApplicationListDto> {
+    const query = new URLSearchParams()
+    if (filter?.status && filter.status !== 'all') query.set('status', filter.status)
+    if (filter?.type && filter.type !== 'all') query.set('type', filter.type)
+    const keyword = filter?.q?.trim()
+    if (keyword) query.set('q', keyword)
+    query.set('page', String(filter?.page ?? 1))
+    query.set('page_size', String(filter?.pageSize ?? DEFAULT_PAGE_SIZE))
+
+    const raw = await request<unknown>(`/admin/certification-applications?${query.toString()}`, {
+      token,
+    })
+    return parseDto(adminCertificationApplicationListDtoSchema, raw)
+  }
+
+  async approveCertificationApplication(
+    token: string,
+    id: string,
+    note?: string | null,
+  ): Promise<AdminCertificationApplicationDto> {
+    const raw = await request<unknown>(
+      `/admin/certification-applications/${encodeId(id)}/approve`,
+      {
+        method: 'POST',
+        token,
+        body: note ? { note } : {},
+      },
+    )
+    return parseDto(adminCertificationApplicationDtoSchema, raw)
+  }
+
+  async rejectCertificationApplication(
+    token: string,
+    id: string,
+    note?: string | null,
+  ): Promise<AdminCertificationApplicationDto> {
+    const raw = await request<unknown>(`/admin/certification-applications/${encodeId(id)}/reject`, {
+      method: 'POST',
+      token,
+      body: note ? { note } : {},
+    })
+    return parseDto(adminCertificationApplicationDtoSchema, raw)
   }
 
   async getSettings(token: string): Promise<AdminSettingsDto> {

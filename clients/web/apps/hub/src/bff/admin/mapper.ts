@@ -1,4 +1,7 @@
 import type {
+  AdminCertificationApplicantView,
+  AdminCertificationApplicationListModel,
+  AdminCertificationApplicationView,
   AdminRedeemCodeBatch,
   AdminRedeemCodeListModel,
   AdminRedeemCodeStatus,
@@ -13,8 +16,11 @@ import type {
 import { formatCents, formatDateTimeLabel } from '@/lib/money'
 
 import { deriveInitials, describeRole } from '../auth/mapper'
-import { certificationFromRoles, normalizeCertification } from '../certification'
+import { certificationsFromRoles, normalizeCertifications } from '../certification'
+import { toCertificationApplicationView } from '../profile/mapper'
 import type {
+  AdminCertificationApplicationDto,
+  AdminCertificationApplicationListDto,
   AdminRedeemCodeDto,
   AdminRedeemCodeListDto,
   AdminRoleDto,
@@ -85,21 +91,22 @@ function normalizeOptional(value: string | null | undefined): string | null {
 
 export function toAdminUserView(dto: AdminUserDto): AdminUserView {
   const username = dto.username
+  const nickname = normalizeOptional(dto.nickname)
   const fullName = normalizeOptional(dto.full_name)
-  const displayName = fullName ?? username
+  const displayName = nickname ?? fullName ?? username
   const roleKeys = [...new Set(dto.roles)]
   const isActive = dto.is_active !== false
-  const certification =
-    normalizeCertification(dto.certification) ?? certificationFromRoles(roleKeys)
+  const certifications = resolveCertifications(dto.certifications, roleKeys)
 
   return {
     id: String(dto.id),
     username,
+    nickname: nickname ?? displayName,
     displayName,
     fullName,
     initials: deriveInitials(displayName),
     email: normalizeOptional(dto.email),
-    certification,
+    certifications,
     isActive,
     statusLabel: isActive ? '已启用' : '已停用',
     roleKeys,
@@ -107,6 +114,55 @@ export function toAdminUserView(dto: AdminUserDto): AdminUserView {
     balanceCents: dto.balance_cents,
     balanceLabel: formatCents(dto.balance_cents),
     createdAtLabel: formatDateTimeLabel(dto.created_at),
+  }
+}
+
+function resolveCertifications(
+  certifications: readonly string[],
+  roleKeys: readonly string[],
+): AdminUserView['certifications'] {
+  const normalized = normalizeCertifications(certifications)
+  return normalized.length > 0 ? normalized : certificationsFromRoles(roleKeys)
+}
+
+function toAdminCertificationApplicant(
+  dto: NonNullable<AdminCertificationApplicationDto['user']>,
+): AdminCertificationApplicantView {
+  const nickname = normalizeOptional(dto.nickname)
+  const username = dto.username
+  const displayName = nickname ?? username
+  const roleKeys = [...new Set(dto.roles)]
+
+  return {
+    id: String(dto.id),
+    username,
+    nickname: nickname ?? displayName,
+    displayName,
+    initials: deriveInitials(displayName),
+    email: normalizeOptional(dto.email),
+    roles: roleKeys.map(describeRole),
+    certifications: resolveCertifications(dto.certifications, roleKeys),
+  }
+}
+
+export function toAdminCertificationApplicationView(
+  dto: AdminCertificationApplicationDto,
+): AdminCertificationApplicationView {
+  return {
+    ...toCertificationApplicationView(dto),
+    applicant: dto.user ? toAdminCertificationApplicant(dto.user) : null,
+  }
+}
+
+export function toAdminCertificationApplicationListModel(
+  dto: AdminCertificationApplicationListDto,
+): AdminCertificationApplicationListModel {
+  const applications = dto.items.map(toAdminCertificationApplicationView)
+  return {
+    applications,
+    total: dto.total > 0 ? dto.total : applications.length,
+    page: dto.page,
+    pageSize: dto.page_size,
   }
 }
 

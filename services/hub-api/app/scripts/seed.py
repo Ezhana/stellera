@@ -22,12 +22,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import get_settings
 from app.db import create_engine, create_session_factory
 from app.models.base import ensure_utc, utcnow
+from app.models.certification import CertificationApplication
 from app.models.fde import FdeOrder, FdeOrderLog
 from app.models.rbac import Permission, Role, RolePermission, UserRole
 from app.models.redeem import RedeemCode
 from app.models.user import User
 from app.models.wallet import Wallet, WalletTransaction
 from app.security.passwords import hash_password
+from app.services.certification import (
+    APPLICATION_STATUS_APPROVED,
+    APPLICATION_STATUS_PENDING,
+    BUSINESS_CERTIFICATION_ROLES,
+    CERTIFICATION_REALNAME,
+    MEMBER_ROLE,
+)
 from app.services.fde import (
     ESCROW_STATUS_HELD,
     ESCROW_STATUS_RELEASED,
@@ -55,7 +63,6 @@ DEMO_REDEEM_BATCH_NO = "RDM-DEMO-2026"
 
 # 已退役的角色：seed 每次都会把持有者迁移成 member 后删除角色行。
 RETIRED_ROLE_NAMES: tuple[str, ...] = ("viewer", "operator")
-MEMBER_ROLE = "member"
 
 # 旧演示账号：仅用户名与邮箱同时精确匹配时才清理。
 LEGACY_DEMO_USERS: tuple[tuple[str, str], ...] = (
@@ -99,8 +106,31 @@ class DemoUserDefinition:
     username: str
     email: str
     password: str
-    full_name: str
-    role: str
+    nickname: str
+    full_name: str | None
+    roles: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DemoCertificationApplicationDefinition:
+    """演示认证申请：approved 会同步实名与认证角色，pending 留给管理端审核。"""
+
+    username: str
+    type: str
+    status: str
+    days_ago: int
+    reviewed_by: str | None = None
+    review_note: str | None = None
+    real_name: str | None = None
+    id_number: str | None = None
+    contact_phone: str | None = None
+    company_name: str | None = None
+    credit_code: str | None = None
+    contact_name: str | None = None
+    skills: str | None = None
+    work_years: int | None = None
+    project_experience: str | None = None
+    description: str | None = None
 
 
 @dataclass(frozen=True)
@@ -164,6 +194,7 @@ class SeedResult:
     created_wallet_transactions: int
     created_redeem_codes: int
     created_settings: int
+    created_certification_applications: int = 0
     retired_roles: tuple[str, ...] = ()
     removed_users: tuple[str, ...] = ()
 
@@ -204,6 +235,7 @@ def load_demo(
     tuple[DemoOrderDefinition, ...],
     tuple[DemoWalletDefinition, ...],
     tuple[DemoRedeemCodeDefinition, ...],
+    tuple[DemoCertificationApplicationDefinition, ...],
 ]:
     data = _read_toml(path)
     users = tuple(
@@ -211,8 +243,9 @@ def load_demo(
             username=user["username"],
             email=user["email"],
             password=user["password"],
-            full_name=user["full_name"],
-            role=user["role"],
+            nickname=user["nickname"],
+            full_name=user.get("full_name"),
+            roles=tuple(user.get("roles", ())),
         )
         for user in data["users"]
     )
@@ -256,7 +289,28 @@ def load_demo(
         )
         for code in data.get("redeem_codes", ())
     )
-    return users, orders, wallets, redeem_codes
+    certifications = tuple(
+        DemoCertificationApplicationDefinition(
+            username=item["username"],
+            type=item["type"],
+            status=item["status"],
+            days_ago=item["days_ago"],
+            reviewed_by=item.get("reviewed_by"),
+            review_note=item.get("review_note"),
+            real_name=item.get("real_name"),
+            id_number=item.get("id_number"),
+            contact_phone=item.get("contact_phone"),
+            company_name=item.get("company_name"),
+            credit_code=item.get("credit_code"),
+            contact_name=item.get("contact_name"),
+            skills=item.get("skills"),
+            work_years=item.get("work_years"),
+            project_experience=item.get("project_experience"),
+            description=item.get("description"),
+        )
+        for item in data.get("certification_applications", ())
+    )
+    return users, orders, wallets, redeem_codes, certifications
 
 
 async def _seed_roles(
@@ -438,15 +492,33 @@ async def _migrate_legacy_demo_users(
     return tuple(removed)
 
 
+async def _ensure_role_link(session: AsyncSession, *, user_id: int, role: Role) -> None:
+    existing_link = (
+        await session.execute(
+            select(UserRole).where(
+                UserRole.user_id == user_id,
+                UserRole.role_id == role.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing_link is None:
+        session.add(UserRole(user_id=user_id, role_id=role.id))
+        # autoflush 关闭：立即 flush，后续幂等查询才能看到刚写入的关联行。
+        await session.flush()
+
+
 async def _ensure_user(
     session: AsyncSession,
     *,
     username: str,
     email: str,
     password: str,
-    full_name: str,
-    role: Role,
+    nickname: str,
+    full_name: str | None,
+    roles: tuple[Role, ...],
     created: list[str],
+    sync_profile: bool = False,
+    fill_profile: bool = False,
 ) -> User:
     user = (
         await session.execute(select(User).where(User.username == username))
@@ -456,23 +528,26 @@ async def _ensure_user(
             username=username,
             email=email,
             hashed_password=hash_password(password),
+            nickname=nickname,
             full_name=full_name,
             is_active=True,
         )
         session.add(user)
         await session.flush()
         created.append(username)
+    elif sync_profile:
+        # 演示账号资料以 TOML 为准，保证存量演示库升级后昵称 / 实名为最新口径。
+        user.nickname = nickname
+        user.full_name = full_name
+    elif fill_profile:
+        # 管理员等固定账号只补空值，不覆盖已有资料修改。
+        if user.nickname is None:
+            user.nickname = nickname
+        if user.full_name is None:
+            user.full_name = full_name
 
-    existing_link = (
-        await session.execute(
-            select(UserRole).where(
-                UserRole.user_id == user.id,
-                UserRole.role_id == role.id,
-            )
-        )
-    ).scalar_one_or_none()
-    if existing_link is None:
-        session.add(UserRole(user_id=user.id, role_id=role.id))
+    for role in roles:
+        await _ensure_role_link(session, user_id=user.id, role=role)
     return user
 
 
@@ -542,6 +617,98 @@ async def _seed_demo_orders(
                 )
             )
         created += 1
+    return created
+
+
+def _certification_payload(
+    definition: DemoCertificationApplicationDefinition,
+) -> dict[str, object]:
+    fields = (
+        "real_name",
+        "id_number",
+        "contact_phone",
+        "company_name",
+        "credit_code",
+        "contact_name",
+        "skills",
+        "work_years",
+        "project_experience",
+        "description",
+    )
+    return {
+        name: getattr(definition, name) for name in fields if getattr(definition, name) is not None
+    }
+
+
+async def _sync_approved_certifications(
+    session: AsyncSession,
+    definitions: tuple[DemoCertificationApplicationDefinition, ...],
+    users: dict[str, User],
+    roles: dict[str, Role],
+) -> None:
+    """按已通过的认证同步实名与角色：实名写入 full_name，企业/工程师互斥并保留 member。"""
+    business_ids = [roles[name].id for name in BUSINESS_CERTIFICATION_ROLES]
+    for definition in definitions:
+        if definition.status != APPLICATION_STATUS_APPROVED:
+            continue
+        user = users[definition.username]
+        if definition.type == CERTIFICATION_REALNAME:
+            if definition.real_name:
+                user.full_name = definition.real_name
+            await _ensure_role_link(session, user_id=user.id, role=roles[CERTIFICATION_REALNAME])
+        elif definition.type in BUSINESS_CERTIFICATION_ROLES:
+            await session.execute(
+                delete(UserRole).where(
+                    UserRole.user_id == user.id,
+                    UserRole.role_id.in_(business_ids),
+                )
+            )
+            await _ensure_role_link(session, user_id=user.id, role=roles[definition.type])
+        await _ensure_role_link(session, user_id=user.id, role=roles[MEMBER_ROLE])
+
+
+async def _seed_demo_certification_applications(
+    session: AsyncSession,
+    definitions: tuple[DemoCertificationApplicationDefinition, ...],
+    users: dict[str, User],
+    roles: dict[str, Role],
+) -> int:
+    """写入演示认证申请（按 user+type 幂等），并同步已通过认证的实名与角色。"""
+    existing = {
+        (row[0], row[1])
+        for row in (
+            await session.execute(
+                select(CertificationApplication.user_id, CertificationApplication.type)
+            )
+        ).all()
+    }
+    now = utcnow()
+    created = 0
+    for definition in definitions:
+        user = users[definition.username]
+        await _sync_approved_certifications(session, (definition,), users, roles)
+        if (user.id, definition.type) in existing:
+            continue
+        reviewed_at = (
+            now - timedelta(days=definition.days_ago)
+            if definition.status != APPLICATION_STATUS_PENDING
+            else None
+        )
+        reviewer = users.get(definition.reviewed_by) if definition.reviewed_by is not None else None
+        session.add(
+            CertificationApplication(
+                user_id=user.id,
+                type=definition.type,
+                status=definition.status,
+                review_note=definition.review_note,
+                reviewer_id=reviewer.id if reviewer is not None else None,
+                reviewed_at=reviewed_at,
+                created_at=now - timedelta(days=definition.days_ago),
+                **_certification_payload(definition),
+            )
+        )
+        created += 1
+    await session.flush()
     return created
 
 
@@ -745,10 +912,12 @@ async def seed_database(
             demo_order_definitions,
             demo_wallet_definitions,
             demo_redeem_definitions,
+            demo_certification_definitions,
         ) = load_demo()
     else:
         demo_user_definitions, demo_order_definitions = (), ()
         demo_wallet_definitions, demo_redeem_definitions = (), ()
+        demo_certification_definitions = ()
 
     created_users: list[str] = []
     created_roles: list[str] = []
@@ -763,15 +932,18 @@ async def seed_database(
             username=settings.admin_username.strip().lower(),
             email=settings.admin_email.strip().lower(),
             password=settings.admin_password,
+            nickname="管理员",
             full_name="系统管理员",
-            role=roles["admin"],
+            roles=(roles["admin"],),
             created=created_users,
+            fill_profile=True,
         )
 
         created_orders = 0
         created_wallets = 0
         created_wallet_transactions = 0
         created_redeem_codes = 0
+        created_certification_applications = 0
         removed_users: tuple[str, ...] = ()
         if demo_user_definitions:
             demo_users = {
@@ -780,9 +952,11 @@ async def seed_database(
                     username=definition.username,
                     email=definition.email,
                     password=definition.password,
+                    nickname=definition.nickname,
                     full_name=definition.full_name,
-                    role=roles[definition.role],
+                    roles=tuple(roles[name] for name in definition.roles),
                     created=created_users,
+                    sync_profile=True,
                 )
                 for definition in demo_user_definitions
             }
@@ -792,6 +966,16 @@ async def seed_database(
                 member_user=demo_users[MEMBER_ROLE],
                 member_role=roles[MEMBER_ROLE],
             )
+            # 管理员用户名可被环境变量改写，demo.toml 里统一用 admin 占位。
+            demo_users[admin_user.username] = admin_user
+            demo_users.setdefault("admin", admin_user)
+            # 演示认证申请依赖演示用户与 admin（审批人），并在写入时同步实名 / 角色。
+            created_certification_applications = await _seed_demo_certification_applications(
+                session,
+                demo_certification_definitions,
+                demo_users,
+                roles,
+            )
             # 演示订单必须在演示用户（发布方/工程师）存在之后写入。
             created_orders = await _seed_demo_orders(
                 session,
@@ -800,9 +984,6 @@ async def seed_database(
                 demo_users["engineer"],
             )
             # 钱包流水依赖演示订单（含创建时间与金额），同一 session 内可见。
-            # 管理员用户名可被环境变量改写，demo.toml 里统一用 admin 占位。
-            demo_users[admin_user.username] = admin_user
-            demo_users.setdefault("admin", admin_user)
             created_wallets, created_wallet_transactions = await _seed_demo_wallets(
                 session,
                 demo_wallet_definitions,
@@ -826,6 +1007,7 @@ async def seed_database(
         created_wallet_transactions=created_wallet_transactions,
         created_redeem_codes=created_redeem_codes,
         created_settings=created_settings,
+        created_certification_applications=created_certification_applications,
         retired_roles=retired_roles,
         removed_users=removed_users,
     )
@@ -852,6 +1034,7 @@ def run_seed(*, demo: bool = False) -> None:
         f"wallets+{result.created_wallets}, "
         f"wallet_transactions+{result.created_wallet_transactions}, "
         f"redeem_codes+{result.created_redeem_codes}, "
+        f"certification_applications+{result.created_certification_applications}, "
         f"settings+{result.created_settings}, "
         f"retired_roles={list(result.retired_roles)}, "
         f"removed_users={list(result.removed_users)}"

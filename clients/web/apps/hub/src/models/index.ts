@@ -54,6 +54,9 @@ export type {
 } from './wallet'
 export { WALLET_TRANSACTION_TYPES } from './wallet'
 export type {
+  AdminCertificationApplicantView,
+  AdminCertificationApplicationListModel,
+  AdminCertificationApplicationView,
   AdminRedeemCodeBatch,
   AdminRedeemCodeListModel,
   AdminRedeemCodeStatus,
@@ -66,3 +69,18 @@ export type {
   AdminUserView,
 } from './admin'
 export { ADMIN_REDEEM_CODE_STATUSES } from './admin'
+export type {
+  CertificationApplicationListModel,
+  CertificationApplicationStatus,
+  CertificationApplicationStatusMeta,
+  CertificationApplicationType,
+  CertificationApplicationTypeMeta,
+  CertificationApplicationView,
+  CooperationRecordView,
+  CooperationRole,
+  CooperationStatsView,
+  ProfilePartyView,
+  PublicProfileView,
+  UserProfileView,
+} from './profile'
+export { CERTIFICATION_APPLICATION_STATUSES, CERTIFICATION_APPLICATION_TYPES } from './profile'

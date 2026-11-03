@@ -40,11 +40,12 @@ FDE = f"{API_V1}/fde"
 USER_FIELDS = {
     "id",
     "username",
-    "email",
+    "nickname",
     "full_name",
+    "email",
     "is_active",
     "roles",
-    "certification",
+    "certifications",
     "balance_cents",
     "created_at",
 }
@@ -184,7 +185,7 @@ def test_non_admin_roles_cannot_access_admin(
 ) -> None:
     pair = login(client, username, password)
 
-    for path in ("/users", "/roles", "/redeem-codes", "/settings"):
+    for path in ("/users", "/roles", "/certification-applications", "/redeem-codes", "/settings"):
         assert client.get(f"{ADMIN}{path}", headers=_headers(pair)).status_code == 403
     assert (
         client.post(
@@ -213,7 +214,7 @@ def test_non_admin_roles_cannot_access_admin(
 # ---------- 用户 ----------
 
 
-def test_list_users_includes_roles_certification_and_balance(client: TestClient) -> None:
+def test_list_users_includes_roles_certifications_and_balance(client: TestClient) -> None:
     admin = login(client)
 
     body = _list_users(client, admin, page_size=100)
@@ -237,22 +238,31 @@ def test_list_users_includes_roles_certification_and_balance(client: TestClient)
     expected_roles = {
         "admin": ["admin"],
         "member": ["member"],
-        "enterprise": ["enterprise"],
-        "engineer": ["engineer"],
+        "enterprise": ["member", "realname", "enterprise"],
+        "engineer": ["member", "realname", "engineer"],
     }
     expected_certifications = {
-        "admin": None,
-        "member": None,
-        "enterprise": "enterprise",
-        "engineer": "engineer",
+        "admin": [],
+        "member": [],
+        "enterprise": ["realname", "enterprise"],
+        "engineer": ["realname", "engineer"],
+    }
+    expected_nicknames = {
+        "admin": "管理员",
+        "member": "会员（演示）",
+        "enterprise": "企业（演示）",
+        "engineer": "工程师（演示）",
     }
     for item in body["items"]:
         assert item["balance_cents"] == expected_balances[item["username"]]
         assert item["roles"] == expected_roles[item["username"]]
-        assert item["certification"] == expected_certifications[item["username"]]
+        assert item["certifications"] == expected_certifications[item["username"]]
+        assert item["nickname"] == expected_nicknames[item["username"]]
         assert item["is_active"] is True
         assert item["created_at"]
-    assert _find_user(body["items"], "member")["full_name"] == "会员（演示）"
+    # 昵称与实名分离：member 还没实名，full_name 为空；企业已通过实名认证。
+    assert _find_user(body["items"], "member")["full_name"] is None
+    assert _find_user(body["items"], "enterprise")["full_name"] == "张伟"
 
 
 def test_list_users_search_filter_and_pagination(client: TestClient) -> None:
@@ -261,8 +271,12 @@ def test_list_users_search_filter_and_pagination(client: TestClient) -> None:
     assert _list_users(client, admin, q="member")["total"] == 1
     assert _list_users(client, admin, q="演示")["total"] == 3
     assert _list_users(client, admin, q="example.com")["total"] == 4
+    # 关键字命中实名（full_name）也计入搜索。
+    assert _list_users(client, admin, q="张伟")["total"] == 1
     assert _list_users(client, admin, role="admin")["total"] == 1
-    assert _list_users(client, admin, role="member")["total"] == 1
+    # 演示数据里 member / enterprise / engineer 都有 member 基线角色。
+    assert _list_users(client, admin, role="member")["total"] == 3
+    assert _list_users(client, admin, role="realname")["total"] == 2
     assert _list_users(client, admin, role="engineer")["total"] == 1
     assert _list_users(client, admin, role="nonexistent")["total"] == 0
 
@@ -282,7 +296,13 @@ def test_roles_catalog_excludes_authenticated(client: TestClient) -> None:
 
     assert response.status_code == 200
     items = response.json()["items"]
-    assert [item["name"] for item in items] == ["member", "enterprise", "engineer", "admin"]
+    assert [item["name"] for item in items] == [
+        "admin",
+        "member",
+        "realname",
+        "enterprise",
+        "engineer",
+    ]
     assert all(item["description"] for item in items)
 
 
@@ -299,7 +319,7 @@ def test_disable_user_blocks_login(client: TestClient) -> None:
     assert disabled.status_code == 200
     assert disabled.json()["is_active"] is False
     assert disabled.json()["roles"] == ["member"]
-    assert disabled.json()["certification"] is None
+    assert disabled.json()["certifications"] == []
     assert disabled.json()["balance_cents"] == 150_000
 
     response = client.post(
@@ -320,7 +340,7 @@ def test_disable_user_blocks_login(client: TestClient) -> None:
     login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
 
 
-def test_update_user_profile(client: TestClient) -> None:
+def test_update_user_nickname_and_email(client: TestClient) -> None:
     admin = login(client)
     member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
     member_item = _find_user(_list_users(client, admin)["items"], "member")
@@ -328,15 +348,17 @@ def test_update_user_profile(client: TestClient) -> None:
     updated = client.patch(
         f"{ADMIN}/users/{member_item['id']}",
         headers=_headers(admin),
-        json={"full_name": "  新会员  ", "email": "  Member2@Example.COM "},
+        json={"nickname": "  新会员  ", "email": "  Member2@Example.COM "},
     )
 
     assert updated.status_code == 200, updated.text
     body = updated.json()
-    assert body["full_name"] == "新会员"
+    assert body["nickname"] == "新会员"
+    # full_name 是实名，管理端编辑昵称不应写入实名。
+    assert body["full_name"] is None
     assert body["email"] == "member2@example.com"
     assert body["roles"] == ["member"]
-    assert body["certification"] is None
+    assert body["certifications"] == []
 
     # 邮箱大小写不敏感地唯一：换成 engineer 的邮箱应冲突。
     conflict = client.patch(
@@ -348,7 +370,8 @@ def test_update_user_profile(client: TestClient) -> None:
     assert conflict.json()["detail"] == "邮箱已被注册"
 
     me = client.get(f"{API_V1}/auth/me", headers=_headers(member)).json()
-    assert me["full_name"] == "新会员"
+    assert me["nickname"] == "新会员"
+    assert me["full_name"] is None
     assert me["email"] == "member2@example.com"
 
 
@@ -366,24 +389,24 @@ def test_update_user_validation_and_not_found(client: TestClient) -> None:
     )
     assert invalid_email.status_code == 422
 
-    blank_name = client.patch(
-        f"{ADMIN}/users/{member['id']}", headers=_headers(admin), json={"full_name": "   "}
+    blank_nickname = client.patch(
+        f"{ADMIN}/users/{member['id']}", headers=_headers(admin), json={"nickname": "   "}
     )
-    assert blank_name.status_code == 422
+    assert blank_nickname.status_code == 422
 
-    long_name = client.patch(
+    long_nickname = client.patch(
         f"{ADMIN}/users/{member['id']}",
         headers=_headers(admin),
-        json={"full_name": "x" * 129},
+        json={"nickname": "x" * 65},
     )
-    assert long_name.status_code == 422
+    assert long_nickname.status_code == 422
 
-    invalid_certification = client.patch(
-        f"{ADMIN}/users/{member['id']}",
-        headers=_headers(admin),
-        json={"certification": "admin"},
-    )
-    assert invalid_certification.status_code == 422
+    # full_name 与 certification 已从可编辑字段中移除：只传它们等于没改任何项。
+    for payload in ({"full_name": "新实名"}, {"certification": "enterprise"}):
+        response = client.patch(
+            f"{ADMIN}/users/{member['id']}", headers=_headers(admin), json=payload
+        )
+        assert response.status_code == 422, payload
 
     missing = client.patch(
         f"{ADMIN}/users/999999", headers=_headers(admin), json={"is_active": False}
@@ -391,76 +414,24 @@ def test_update_user_validation_and_not_found(client: TestClient) -> None:
     assert missing.status_code == 404
 
 
-def test_certification_change_updates_roles_and_order_refs(client: TestClient) -> None:
+def test_admin_cannot_edit_real_name_or_certifications(client: TestClient) -> None:
     admin = login(client)
-    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
-    enterprise = login(client, ENTERPRISE_USERNAME, ENTERPRISE_PASSWORD)
-    member_id = member["user"]["id"]
-    member_item = _find_user(_list_users(client, admin)["items"], "member")
-    assert member_item["roles"] == ["member"]
-    assert member_item["certification"] is None
+    member = _find_user(_list_users(client, admin)["items"], "member")
+    enterprise = _find_user(_list_users(client, admin)["items"], "enterprise")
 
-    # 授予企业认证：保留 member 基线角色。
-    granted = client.patch(
-        f"{ADMIN}/users/{member_id}",
-        headers=_headers(admin),
-        json={"certification": "enterprise"},
-    )
-    assert granted.status_code == 200
-    assert granted.json()["roles"] == ["member", "enterprise"]
-    assert granted.json()["certification"] == "enterprise"
+    for payload in ({"full_name": "新实名"}, {"certification": "engineer"}):
+        response = client.patch(
+            f"{ADMIN}/users/{member['id']}", headers=_headers(admin), json=payload
+        )
+        assert response.status_code == 422, payload
 
-    me = client.get(f"{API_V1}/auth/me", headers=_headers(member)).json()
-    assert set(me["roles"]) == {"member", "enterprise"}
-
-    # 订单里的用户认证状态同步：member 申请接单并被通过后，工程师摘要为企业。
-    order = _publish(client, enterprise)
-    application = client.post(
-        f"{FDE}/orders/{order['id']}/applications",
-        headers=_headers(member),
-        json={"type": "accept"},
-    )
-    assert application.status_code == 201, application.text
-    approved = client.post(
-        f"{FDE}/applications/{application.json()['id']}/approve",
-        headers=_headers(enterprise),
-        json={},
-    )
-    assert approved.status_code == 200
-    assert approved.json()["order"]["engineer"]["certification"] == "enterprise"
-
-    # 切换为工程师认证：互斥替换。
-    switched = client.patch(
-        f"{ADMIN}/users/{member_id}",
-        headers=_headers(admin),
-        json={"certification": "engineer"},
-    )
-    assert switched.json()["roles"] == ["member", "engineer"]
-    assert switched.json()["certification"] == "engineer"
-    detail = client.get(f"{FDE}/orders/{order['id']}", headers=_headers(enterprise)).json()
-    assert detail["engineer"]["certification"] == "engineer"
-
-    # 撤销认证：只保留 member。
-    revoked = client.patch(
-        f"{ADMIN}/users/{member_id}",
-        headers=_headers(admin),
-        json={"certification": "none"},
-    )
-    assert revoked.json()["roles"] == ["member"]
-    assert revoked.json()["certification"] is None
-    detail = client.get(f"{FDE}/orders/{order['id']}", headers=_headers(enterprise)).json()
-    assert detail["engineer"]["certification"] is None
-
-    # 认证状态变更不会影响 admin 角色。
-    admin_id = admin["user"]["id"]
-    certified_admin = client.patch(
-        f"{ADMIN}/users/{admin_id}",
-        headers=_headers(admin),
-        json={"certification": "enterprise"},
-    )
-    assert certified_admin.status_code == 200
-    assert "admin" in certified_admin.json()["roles"]
-    assert certified_admin.json()["certification"] == "enterprise"
+    after = _find_user(_list_users(client, admin)["items"], "member")
+    assert after["nickname"] == member["nickname"]
+    assert after["full_name"] is None
+    assert after["roles"] == ["member"]
+    assert after["certifications"] == []
+    # 认证列表由审核流程写入，管理端只读展示。
+    assert enterprise["certifications"] == ["realname", "enterprise"]
 
 
 def test_cannot_disable_self(client: TestClient) -> None:
@@ -518,7 +489,7 @@ def test_wallet_adjustment_updates_balance_and_transaction(client: TestClient) -
     body = adjusted.json()
     assert body["balance_cents"] == 200_000
     assert body["roles"] == ["member"]
-    assert body["certification"] is None
+    assert body["certifications"] == []
 
     transactions = client.get(
         f"{API_V1}/wallet/transactions",

@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from app.core.config import Settings
 from app.db import create_all_tables, create_engine, create_session_factory
 from app.models.base import utcnow
+from app.models.certification import CertificationApplication
 from app.models.fde import FdeOrder, FdeOrderLog
 from app.models.rbac import Permission, Role, RolePermission, UserRole
 from app.models.redeem import RedeemCode
@@ -28,6 +29,7 @@ ROLE_DEFINITIONS, PERMISSION_DEFINITIONS = load_rbac()
     DEMO_ORDER_DEFINITIONS,
     DEMO_WALLET_DEFINITIONS,
     DEMO_REDEEM_CODE_DEFINITIONS,
+    DEMO_CERTIFICATION_DEFINITIONS,
 ) = load_demo()
 
 EXPECTED_DEMO_BALANCES = {
@@ -82,6 +84,11 @@ def _run_seed(settings: Settings, *, demo: bool = True) -> tuple[Any, Any, dict[
                     "settings": (
                         await session.execute(select(func.count()).select_from(SystemSetting))
                     ).scalar_one(),
+                    "certification_applications": (
+                        await session.execute(
+                            select(func.count()).select_from(CertificationApplication)
+                        )
+                    ).scalar_one(),
                 }
                 balance_rows = (
                     await session.execute(
@@ -107,18 +114,19 @@ def test_seed_is_idempotent(tmp_path: Path) -> None:
 
     assert first.created_users == ("admin", *[user.username for user in DEMO_USER_DEFINITIONS])
     assert first.created_users == ("admin", "member", "enterprise", "engineer")
-    assert len(first.created_roles) == len(ROLE_DEFINITIONS) == 5
-    assert first.created_permissions == len(PERMISSION_DEFINITIONS) == 17
+    assert len(first.created_roles) == len(ROLE_DEFINITIONS) == 6
+    assert first.created_permissions == len(PERMISSION_DEFINITIONS) == 22
     assert first.created_orders == len(DEMO_ORDER_DEFINITIONS) == 10
     assert first.created_wallets == len(DEMO_WALLET_DEFINITIONS) == 4
     # 3 条演示充值 + 10 条订单托管 + 2 条完成结算 + 1 条已用兑换码入账。
     assert first.created_wallet_transactions == 16
     assert first.created_redeem_codes == len(DEMO_REDEEM_CODE_DEFINITIONS) == 3
+    assert first.created_certification_applications == len(DEMO_CERTIFICATION_DEFINITIONS) == 5
     assert first.created_settings == 3
     assert first.retired_roles == ()
     assert first.removed_users == ()
 
-    # 第二次执行不应重复创建任何东西（含演示钱包、流水、兑换码与系统设置）。
+    # 第二次执行不应重复创建任何东西（含演示钱包、流水、兑换码、认证申请与系统设置）。
     assert second.created_users == ()
     assert second.created_roles == ()
     assert second.created_permissions == 0
@@ -126,17 +134,21 @@ def test_seed_is_idempotent(tmp_path: Path) -> None:
     assert second.created_wallets == 0
     assert second.created_wallet_transactions == 0
     assert second.created_redeem_codes == 0
+    assert second.created_certification_applications == 0
     assert second.created_settings == 0
 
     assert counts["users"] == 1 + len(DEMO_USER_DEFINITIONS) == 4
-    assert counts["roles"] == 5
-    assert counts["permissions"] == 17
-    assert counts["links"] == 4
+    assert counts["roles"] == 6
+    assert counts["permissions"] == 22
+    # admin 1 条 + member 1 条 + enterprise 3 条（member/realname/enterprise）
+    # + engineer 3 条（member/realname/engineer）= 8。
+    assert counts["links"] == 8
     assert counts["orders"] == 10
     assert counts["logs"] == 11
     assert counts["wallets"] == 4
     assert counts["wallet_transactions"] == 16
     assert counts["redeem_codes"] == 3
+    assert counts["certification_applications"] == 5
     assert counts["settings"] == 3
     assert counts["balances"] == EXPECTED_DEMO_BALANCES
 
@@ -148,18 +160,20 @@ def test_seed_without_demo_only_creates_admin(tmp_path: Path) -> None:
 
     assert first.created_users == ("admin",)
     assert first.created_roles == tuple(role.name for role in ROLE_DEFINITIONS)
-    assert first.created_permissions == 17
+    assert first.created_permissions == 22
     assert first.created_orders == 0
     assert first.created_wallets == 0
     assert first.created_wallet_transactions == 0
     assert first.created_redeem_codes == 0
+    assert first.created_certification_applications == 0
     # 系统设置即使没有演示数据也会写入默认值。
     assert first.created_settings == 3
     assert second.created_settings == 0
     assert counts["users"] == 1
-    assert counts["roles"] == 5
-    assert counts["permissions"] == 17
+    assert counts["roles"] == 6
+    assert counts["permissions"] == 22
     assert counts["links"] == 1
+    assert counts["certification_applications"] == 0
     assert counts["orders"] == 0
     assert counts["logs"] == 0
     assert counts["wallets"] == 0
@@ -191,6 +205,7 @@ def test_role_tree_is_member_centered(tmp_path: Path) -> None:
     assert parents == {
         "authenticated": None,
         "member": "authenticated",
+        "realname": "member",
         "enterprise": "member",
         "engineer": "member",
         "admin": "member",
@@ -225,7 +240,7 @@ def test_seed_permissions_match_rbac_toml(tmp_path: Path) -> None:
         for definition in PERMISSION_DEFINITIONS
     }
     assert role_permissions == expected
-    assert len(role_permissions) == 17
+    assert len(role_permissions) == 22
 
 
 def test_demo_orders_are_realistic_and_idempotent(tmp_path: Path) -> None:
@@ -275,7 +290,8 @@ def test_demo_orders_are_realistic_and_idempotent(tmp_path: Path) -> None:
     assert statuses.count("completed") == 2
 
     for order in orders:
-        assert order.publisher.full_name == "企业（演示）"
+        assert order.publisher.nickname == "企业（演示）"
+        assert order.publisher.full_name == "张伟"
         if order.status == "open":
             assert order.engineer_id is None
             assert order.claimed_at is None
@@ -496,13 +512,152 @@ def test_seed_retires_legacy_roles_and_demo_accounts(tmp_path: Path) -> None:
 
     assert set(result.retired_roles) == {"viewer", "operator"}
     assert result.removed_users == ("operator",)
-    assert state["role_names"] == {"authenticated", "member", "enterprise", "engineer", "admin"}
+    assert state["role_names"] == {
+        "authenticated",
+        "member",
+        "realname",
+        "enterprise",
+        "engineer",
+        "admin",
+    }
     assert state["operator_user"] is None
     assert state["viewer_roles"] == {"member"}
     assert state["legacy_code_used_by"] == state["member_id"]
     assert state["counts"] == {
         "users": 5,
-        "roles": 5,
-        "permissions": 17,
+        "roles": 6,
+        "permissions": 22,
         "wallets": 5,
     }
+
+
+def test_demo_certification_applications_and_profiles(tmp_path: Path) -> None:
+    """演示认证申请：企业/工程师各 2 条已通过、member 1 条 pending，并同步实名与角色。"""
+
+    settings = build_test_settings(f"sqlite+aiosqlite:///{tmp_path / 'cert.db'}")
+
+    async def _load() -> tuple[list[CertificationApplication], dict[str, Any]]:
+        engine = create_engine(settings)
+        factory = create_session_factory(engine)
+        try:
+            await create_all_tables(engine)
+            seed_settings = build_seed_settings()
+            await seed_database(seed_settings, factory, demo=True)
+            await seed_database(seed_settings, factory, demo=True)
+            async with factory() as session:
+                applications = (
+                    (
+                        await session.execute(
+                            select(CertificationApplication)
+                            .options(selectinload(CertificationApplication.reviewer))
+                            .order_by(CertificationApplication.id)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                users = {
+                    user.username: user
+                    for user in (await session.execute(select(User))).scalars().all()
+                }
+                role_rows = (
+                    await session.execute(
+                        select(User.username, Role.name)
+                        .join(UserRole, UserRole.user_id == User.id)
+                        .join(Role, Role.id == UserRole.role_id)
+                    )
+                ).all()
+                roles: dict[str, set[str]] = {}
+                for username, role_name in role_rows:
+                    roles.setdefault(username, set()).add(role_name)
+                return list(applications), {"users": users, "roles": roles}
+        finally:
+            await engine.dispose()
+
+    applications, state = asyncio.run(_load())
+
+    assert len(applications) == 5
+    by_key = {(item.user_id, item.type): item for item in applications}
+    users = state["users"]
+
+    enterprise_realname = by_key[(users["enterprise"].id, "realname")]
+    assert enterprise_realname.status == "approved"
+    assert enterprise_realname.real_name == "张伟"
+    assert enterprise_realname.id_number
+    assert enterprise_realname.contact_phone
+    assert enterprise_realname.reviewer is not None
+    assert enterprise_realname.reviewer.username == "admin"
+    assert enterprise_realname.reviewed_at is not None
+
+    enterprise_cert = by_key[(users["enterprise"].id, "enterprise")]
+    assert enterprise_cert.status == "approved"
+    assert enterprise_cert.company_name
+    assert enterprise_cert.credit_code
+    assert enterprise_cert.contact_name and enterprise_cert.contact_phone
+
+    engineer_realname = by_key[(users["engineer"].id, "realname")]
+    assert engineer_realname.status == "approved"
+    assert engineer_realname.real_name == "李强"
+
+    engineer_cert = by_key[(users["engineer"].id, "engineer")]
+    assert engineer_cert.status == "approved"
+    assert engineer_cert.skills
+    assert engineer_cert.work_years == 6
+    assert engineer_cert.project_experience
+
+    member_realname = by_key[(users["member"].id, "realname")]
+    assert member_realname.status == "pending"
+    assert member_realname.reviewer_id is None
+    assert member_realname.reviewed_at is None
+    assert member_realname.real_name == "王芳"
+
+    assert state["roles"]["admin"] == {"admin"}
+    assert state["roles"]["member"] == {"member"}
+    assert state["roles"]["enterprise"] == {"member", "realname", "enterprise"}
+    assert state["roles"]["engineer"] == {"member", "realname", "engineer"}
+
+    assert users["admin"].nickname == "管理员"
+    assert users["admin"].full_name == "系统管理员"
+    assert users["member"].nickname == "会员（演示）"
+    # member 的实名还在 pending：不能有 full_name。
+    assert users["member"].full_name is None
+    assert users["enterprise"].nickname == "企业（演示）"
+    assert users["enterprise"].full_name == "张伟"
+    assert users["engineer"].nickname == "工程师（演示）"
+    assert users["engineer"].full_name == "李强"
+
+
+def test_seed_backfills_legacy_admin_profile(tmp_path: Path) -> None:
+    """存量库里的 admin 没有昵称：seed 只补空值，不覆盖已有实名。"""
+
+    settings = build_test_settings(f"sqlite+aiosqlite:///{tmp_path / 'legacy-admin.db'}")
+
+    async def _run() -> tuple[str | None, str | None]:
+        engine = create_engine(settings)
+        factory = create_session_factory(engine)
+        try:
+            await create_all_tables(engine)
+            async with factory() as session:
+                session.add(
+                    User(
+                        username="admin",
+                        email="admin@example.com",
+                        hashed_password=hash_password("admin12345"),
+                        full_name="系统管理员",
+                        is_active=True,
+                    )
+                )
+                await session.commit()
+            await seed_database(build_seed_settings(), factory, demo=False)
+            async with factory() as session:
+                admin = (
+                    await session.execute(select(User).where(User.username == "admin"))
+                ).scalar_one()
+                return admin.nickname, admin.full_name
+        finally:
+            await engine.dispose()
+
+    nickname, full_name = asyncio.run(_run())
+
+    assert nickname == "管理员"
+    assert full_name == "系统管理员"

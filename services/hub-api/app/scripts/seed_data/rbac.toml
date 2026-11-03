@@ -1,6 +1,6 @@
 # RBAC 基线数据：每次 init / seed 都会应用（幂等）。
-# 角色树：authenticated（根）-> member -> enterprise / engineer / admin。
-# roles 的 parent 可省略，表示根角色。
+# 角色树：authenticated（根）-> member -> realname / enterprise / engineer / admin。
+# realname 只是认证身份，不额外授予业务权限；roles 的 parent 可省略，表示根角色。
 
 [[roles]]
 name = "authenticated"
@@ -10,6 +10,11 @@ description = "所有已登录用户的基线角色"
 name = "member"
 parent = "authenticated"
 description = "注册即获得的会员基线角色"
+
+[[roles]]
+name = "realname"
+parent = "member"
+description = "已实名认证：仅作身份标识，不额外授予业务权限"
 
 [[roles]]
 name = "enterprise"
@@ -27,7 +32,7 @@ parent = "member"
 description = "超级管理员：管理后台全部权限"
 
 # 业务端点对所有登录用户开放（authenticated），具体权限（发布者 / 接单工程师 /
-# 管理员）由服务层按订单归属判断；admin 另外保留 /api/v1/* 全方法通配。
+# 申请人 / 管理员）由服务层按归属判断；admin 另外保留 /api/v1/* 全方法通配。
 
 [[permissions]]
 role = "authenticated"
@@ -124,6 +129,36 @@ role = "authenticated"
 object = "/api/v1/fde/applications/*/withdraw"
 action = "^POST$"
 description = "撤回申请（服务层限定申请人本人）"
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/profile"
+action = "^GET$"
+description = "读取本人资料与合作记录"
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/profile"
+action = "^PATCH$"
+description = "修改本人资料"
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/profile/certification-applications"
+action = "^GET$"
+description = "只读：我的认证申请"
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/profile/certification-applications"
+action = "^POST$"
+description = "提交实名 / 企业 / 工程师认证申请"
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/profiles/*"
+action = "^GET$"
+description = "只读：他人公开主页"
 
 [[permissions]]
 role = "admin"

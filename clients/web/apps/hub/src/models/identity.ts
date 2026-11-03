@@ -1,29 +1,29 @@
 /** Tone names shared by chips and page models. */
 export type BadgeTone = 'default' | 'accent' | 'info' | 'success' | 'warning' | 'error'
 
-/** Certification derived from the viewer's enterprise/engineer roles. */
-export type Certification = 'enterprise' | 'engineer' | null
+/** Certifications a viewer can hold; a single user may hold several at once. */
+export type Certification = 'realname' | 'enterprise' | 'engineer'
 
 export interface CertificationMeta {
-  certification: Exclude<Certification, null>
+  certification: Certification
   label: string
   tone: BadgeTone
 }
 
-/** Frontend-owned labels/tones for the two certifications; `admin` never certifies. */
+/** Frontend-owned labels/tones for the three certifications; `admin` never certifies. */
 export const CERTIFICATIONS: readonly CertificationMeta[] = [
+  { certification: 'realname', label: '实名认证', tone: 'info' },
   { certification: 'enterprise', label: '企业认证', tone: 'accent' },
   { certification: 'engineer', label: '工程师认证', tone: 'success' },
 ]
 
-const CERTIFICATION_META = new Map<Exclude<Certification, null>, CertificationMeta>(
+const CERTIFICATION_META = new Map<Certification, CertificationMeta>(
   CERTIFICATIONS.map((meta) => [meta.certification, meta]),
 )
 
-/** Known certification label/tone, or `null` when the viewer is not certified. */
-export function describeCertification(certification: Certification): CertificationMeta | null {
-  if (!certification) return null
-  return CERTIFICATION_META.get(certification) ?? null
+/** Known certification label/tone, or `null` for an unknown wire value. */
+export function describeCertification(certification: string): CertificationMeta | null {
+  return CERTIFICATION_META.get(certification as Certification) ?? null
 }
 
 export interface RoleView {
@@ -71,13 +71,14 @@ export interface HubCapabilities {
 export interface ViewerProfile {
   id: string
   username: string
+  nickname: string
   displayName: string
   email: string | null
   initials: string
   status: ViewerStatus
   statusLabel: string
   isAdmin: boolean
-  certification: Certification
+  certifications: Certification[]
   roles: RoleView[]
   permissionGroups: PermissionGroupView[]
   permissionCount: number

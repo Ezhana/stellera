@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   formatRedeemCodeStatus,
+  toAdminCertificationApplicationListModel,
+  toAdminCertificationApplicationView,
   toAdminRedeemCodeBatch,
   toAdminRedeemCodeListModel,
   toAdminRedeemCodeView,
@@ -11,6 +13,8 @@ import {
   toAdminUserView,
 } from '../mapper'
 import {
+  buildAdminCertificationApplicationDto,
+  buildAdminCertificationApplicationListDto,
   buildAdminRoleDto,
   buildAdminSettingsDto,
   buildAdminSettingDto,
@@ -26,8 +30,10 @@ describe('admin mapper users', () => {
     const view = toAdminUserView(
       buildAdminUserDto({
         id: 'u-1',
+        nickname: 'Luna Chen',
         full_name: 'Luna Chen',
-        roles: ['enterprise', 'engineer'],
+        roles: ['realname', 'enterprise', 'engineer'],
+        certifications: ['realname', 'enterprise', 'engineer'],
         balance_cents: 1_234_500,
         is_active: true,
       }),
@@ -36,19 +42,21 @@ describe('admin mapper users', () => {
     expect(view).toMatchObject({
       id: 'u-1',
       username: 'luna',
+      nickname: 'Luna Chen',
       displayName: 'Luna Chen',
       fullName: 'Luna Chen',
       initials: 'LC',
       email: 'luna@example.com',
-      certification: 'enterprise',
+      certifications: ['realname', 'enterprise', 'engineer'],
       isActive: true,
       statusLabel: '已启用',
-      roleKeys: ['enterprise', 'engineer'],
+      roleKeys: ['realname', 'enterprise', 'engineer'],
       balanceCents: 1_234_500,
       balanceLabel: '¥12,345',
       createdAtLabel: expect.any(String),
     })
     expect(view.roles).toEqual([
+      { key: 'realname', label: '实名认证', tone: 'info' },
       { key: 'enterprise', label: '企业', tone: 'accent' },
       { key: 'engineer', label: '工程师', tone: 'success' },
     ])
@@ -58,28 +66,32 @@ describe('admin mapper users', () => {
     const view = toAdminUserView(
       buildAdminUserDto({
         username: 'ghost',
+        nickname: null,
         full_name: '   ',
         email: null,
         is_active: false,
         roles: ['admin', 'mystery_role', 'admin'],
-        certification: 'vip',
+        certifications: ['vip'],
       }),
     )
 
     expect(view.displayName).toBe('ghost')
+    expect(view.nickname).toBe('ghost')
     expect(view.fullName).toBeNull()
     expect(view.initials).toBe('GH')
     expect(view.email).toBeNull()
-    expect(view.certification).toBeNull()
+    expect(view.certifications).toEqual([])
     expect(view.statusLabel).toBe('已停用')
     expect(view.roleKeys).toEqual(['admin', 'mystery_role'])
     expect(view.roles[1]).toEqual({ key: 'mystery_role', label: 'mystery_role', tone: 'default' })
   })
 
-  it('derives the certification from roles when the backend omits it', () => {
-    const view = toAdminUserView(buildAdminUserDto({ roles: ['engineer'], certification: null }))
+  it('derives the certifications from roles when the backend omits the list', () => {
+    const view = toAdminUserView(
+      buildAdminUserDto({ roles: ['realname', 'engineer'], certifications: [] }),
+    )
 
-    expect(view.certification).toBe('engineer')
+    expect(view.certifications).toEqual(['realname', 'engineer'])
   })
 
   it('maps a user list and falls back to the loaded length for total', () => {
@@ -104,6 +116,54 @@ describe('admin mapper users', () => {
       label: 'custom_role',
       tone: 'default',
     })
+  })
+})
+
+describe('admin mapper certification applications', () => {
+  it('maps the application and its applicant summary', () => {
+    const view = toAdminCertificationApplicationView(buildAdminCertificationApplicationDto())
+
+    expect(view).toMatchObject({
+      id: '11',
+      type: 'realname',
+      typeLabel: '实名认证',
+      status: 'pending',
+      statusLabel: '待审核',
+      realName: '张三',
+      applicant: {
+        id: '6',
+        username: 'member',
+        nickname: '会员（演示）',
+        displayName: '会员（演示）',
+        certifications: ['realname'],
+      },
+    })
+    expect(view.applicant?.roles.map((role) => role.key)).toEqual(['member', 'realname'])
+  })
+
+  it('keeps a null applicant when the payload only carries the application', () => {
+    const view = toAdminCertificationApplicationView(
+      buildAdminCertificationApplicationDto({ user: null }),
+    )
+
+    expect(view.applicant).toBeNull()
+  })
+
+  it('maps an application list and falls back to the loaded length', () => {
+    const model = toAdminCertificationApplicationListModel(
+      buildAdminCertificationApplicationListDto(
+        [
+          buildAdminCertificationApplicationDto(),
+          buildAdminCertificationApplicationDto({ id: 12 }),
+        ],
+        { total: 0 },
+      ),
+    )
+
+    expect(model.applications).toHaveLength(2)
+    expect(model.total).toBe(2)
+    expect(model.page).toBe(1)
+    expect(model.pageSize).toBe(20)
   })
 })
 

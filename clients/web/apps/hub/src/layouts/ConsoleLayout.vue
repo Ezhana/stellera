@@ -122,11 +122,17 @@ async function handleLogout(): Promise<void> {
           <div class="console-layout__identity-copy">
             <p class="console-layout__account-name">{{ viewer.displayName }}</p>
             <p class="console-layout__account-meta">{{ viewer.email ?? '未登记邮箱' }}</p>
+            <RouterLink
+              class="console-layout__profile-link"
+              :to="{ name: 'public-profile', params: { id: viewer.id } }"
+            >
+              公开主页
+            </RouterLink>
           </div>
         </div>
 
-        <div v-if="viewer.certification" class="console-layout__certification">
-          <CertificationMark :certification="viewer.certification" />
+        <div v-if="viewer.certifications.length" class="console-layout__certification">
+          <CertificationMark :certifications="viewer.certifications" />
         </div>
 
         <ul v-if="viewer.roles.length" class="console-layout__roles" aria-label="角色">
@@ -367,6 +373,17 @@ async function handleLogout(): Promise<void> {
   color: var(--color-fg-muted);
   font-size: var(--font-size-caption);
   overflow-wrap: anywhere;
+}
+
+.console-layout__profile-link {
+  color: var(--color-accent-hover);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+}
+
+.console-layout__profile-link:hover {
+  color: var(--color-accent);
+  text-decoration: none;
 }
 
 .console-layout__roles {

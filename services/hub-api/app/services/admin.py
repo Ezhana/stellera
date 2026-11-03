@@ -1,8 +1,8 @@
 """管理后台业务逻辑：用户编辑与余额调整、兑换码、角色目录。
 
-所有写操作都集中在这里做校验与保护，端点只负责 HTTP 语义与权限投影刷新。
-角色不再通过接口整体覆写：认证状态仅由 certification 字段在
-enterprise / engineer 两个认证角色之间切换，admin 角色不受影响。
+所有写操作都集中在这里做校验与保护，端点只负责 HTTP 语义。
+用户资料只允许改昵称 / 邮箱 / 启用状态；实名与认证只能通过认证审核流程变更，
+管理端不再直接修改 full_name 或认证角色。
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import string
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -26,24 +26,18 @@ from app.models.wallet import Wallet
 from app.rbac.enforcer import AUTHENTICATED_ROLE, load_user_role_names
 from app.services import wallet as wallet_service
 from app.services.certification import (
-    CERTIFICATION_ROLES,
-    certification_from_roles,
+    ADMIN_ROLE,
+    ROLE_DISPLAY_ORDER,
+    certifications_from_roles,
+    sort_role_names,
 )
 from app.services.wallet import REDEEM_STATUS_ACTIVE, REDEEM_STATUS_USED
-
-ADMIN_ROLE = "admin"
-MEMBER_ROLE = "member"
-
-# 管理端展示顺序；authenticated 是自动基线，不出现在角色目录里。
-ROLE_DISPLAY_ORDER: tuple[str, ...] = (MEMBER_ROLE, "enterprise", "engineer", ADMIN_ROLE)
 
 # 兑换码去掉易混字符 I/O/0/1，避免人工输入时看错。
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 BATCH_ALPHABET = string.ascii_uppercase + string.digits
 
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-CERTIFICATION_NONE = "none"
 
 
 class AdminError(Exception):
@@ -59,16 +53,16 @@ class AdminConflictError(AdminError):
 
 
 class AdminValidationError(AdminError):
-    """参数不合法（邮箱格式、认证状态等），对应 HTTP 422。"""
+    """参数不合法（昵称 / 邮箱格式等），对应 HTTP 422。"""
 
 
 @dataclass(frozen=True)
 class AdminUserItem:
-    """管理端用户列表项：用户 + 角色列表 + 认证状态 + 钱包余额。"""
+    """管理端用户列表项：用户 + 角色列表 + 认证列表 + 钱包余额。"""
 
     user: User
     roles: tuple[str, ...]
-    certification: str | None
+    certifications: tuple[str, ...]
     balance_cents: int
 
 
@@ -109,20 +103,6 @@ class RedeemCodeBatch:
     items: tuple[AdminRedeemCodeItem, ...]
 
 
-def _sort_roles(names: list[str] | tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(
-        sorted(
-            set(names),
-            key=lambda name: (
-                ROLE_DISPLAY_ORDER.index(name)
-                if name in ROLE_DISPLAY_ORDER
-                else len(ROLE_DISPLAY_ORDER),
-                name,
-            ),
-        )
-    )
-
-
 async def _roles_by_user(session: AsyncSession, user_ids: list[int]) -> dict[int, tuple[str, ...]]:
     if not user_ids:
         return {}
@@ -136,7 +116,7 @@ async def _roles_by_user(session: AsyncSession, user_ids: list[int]) -> dict[int
     grouped: dict[int, list[str]] = {}
     for user_id, role_name in rows:
         grouped.setdefault(user_id, []).append(role_name)
-    return {user_id: _sort_roles(names) for user_id, names in grouped.items()}
+    return {user_id: sort_role_names(names) for user_id, names in grouped.items()}
 
 
 async def _wallet_balance(session: AsyncSession, user_id: int) -> int:
@@ -150,7 +130,7 @@ def _user_item_from(user: User, roles: tuple[str, ...], balance_cents: int) -> A
     return AdminUserItem(
         user=user,
         roles=roles,
-        certification=certification_from_roles(roles),
+        certifications=certifications_from_roles(roles),
         balance_cents=balance_cents,
     )
 
@@ -158,7 +138,7 @@ def _user_item_from(user: User, roles: tuple[str, ...], balance_cents: int) -> A
 async def _user_item(session: AsyncSession, user: User) -> AdminUserItem:
     return _user_item_from(
         user,
-        _sort_roles(await load_user_role_names(session, user.id)),
+        sort_role_names(await load_user_role_names(session, user.id)),
         await _wallet_balance(session, user.id),
     )
 
@@ -178,6 +158,7 @@ async def list_users(
         filters.append(
             or_(
                 User.username.ilike(pattern),
+                User.nickname.ilike(pattern),
                 User.email.ilike(pattern),
                 User.full_name.ilike(pattern),
             )
@@ -238,76 +219,32 @@ async def _admin_count(session: AsyncSession) -> int:
     ).scalar_one()
 
 
-async def _apply_certification(
-    session: AsyncSession,
-    *,
-    user_id: int,
-    certification: str,
-) -> None:
-    """在 enterprise / engineer 两个认证角色之间切换，并确保 member 基线角色。"""
-    if certification not in (CERTIFICATION_NONE, *CERTIFICATION_ROLES):
-        raise AdminValidationError("认证状态不合法")
-
-    certification_roles = {
-        role.name: role.id
-        for role in (
-            await session.execute(select(Role).where(Role.name.in_(CERTIFICATION_ROLES)))
-        ).scalars()
-    }
-    if len(certification_roles) != len(CERTIFICATION_ROLES):
-        raise AdminValidationError("认证角色未初始化")
-    member_role_id = (
-        await session.execute(select(Role.id).where(Role.name == MEMBER_ROLE))
-    ).scalar_one_or_none()
-    if member_role_id is None:
-        raise AdminValidationError("member 角色未初始化")
-
-    # 认证角色只由本接口维护：先全部移除，再加目标角色（none 表示撤销认证）。
-    await session.execute(
-        delete(UserRole).where(
-            UserRole.user_id == user_id,
-            UserRole.role_id.in_(certification_roles.values()),
-        )
-    )
-    existing_role_ids = set(
-        (
-            await session.execute(select(UserRole.role_id).where(UserRole.user_id == user_id))
-        ).scalars()
-    )
-    if certification != CERTIFICATION_NONE:
-        session.add(UserRole(user_id=user_id, role_id=certification_roles[certification]))
-    if member_role_id not in existing_role_ids:
-        session.add(UserRole(user_id=user_id, role_id=member_role_id))
-    await session.flush()
-
-
 async def update_user(
     session: AsyncSession,
     *,
     actor_id: int,
     user_id: int,
-    full_name: str | None = None,
+    nickname: str | None = None,
     email: str | None = None,
     is_active: bool | None = None,
-    certification: str | None = None,
 ) -> AdminUserItem:
-    """更新用户资料 / 启用状态 / 认证状态，并施加管理员保护规则。
+    """更新昵称 / 邮箱 / 启用状态，并施加管理员保护规则。
 
-    角色不再整体改写：admin 角色保持原样，认证状态只切换 enterprise / engineer。
+    full_name（实名）与认证角色不在这里改：只能由认证审核通过后写入。
     """
     user = await session.get(User, user_id)
     if user is None:
         raise AdminNotFoundError("用户不存在")
-    if full_name is None and email is None and is_active is None and certification is None:
+    if nickname is None and email is None and is_active is None:
         raise AdminValidationError("至少需要修改一项")
 
     current_roles = set(await load_user_role_names(session, user_id))
 
-    if full_name is not None:
-        normalized_name = full_name.strip()
-        if not 1 <= len(normalized_name) <= 128:
-            raise AdminValidationError("姓名长度需在 1-128 个字符之间")
-        user.full_name = normalized_name
+    if nickname is not None:
+        normalized_nickname = nickname.strip()
+        if not 1 <= len(normalized_nickname) <= 64:
+            raise AdminValidationError("昵称长度需在 1-64 个字符之间")
+        user.nickname = normalized_nickname
 
     if email is not None:
         normalized_email = email.strip().lower()
@@ -344,9 +281,6 @@ async def update_user(
                 )
                 .values(revoked_at=utcnow())
             )
-
-    if certification is not None:
-        await _apply_certification(session, user_id=user_id, certification=certification)
 
     await session.commit()
     return await _user_item(session, user)

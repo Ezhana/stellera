@@ -75,6 +75,9 @@ async function mountPage(): Promise<{ wrapper: VueWrapper; router: Router }> {
     history: createMemoryHistory(),
     routes: [
       { path: '/login', name: 'login', component: EmptyView },
+      { path: '/profile', name: 'profile', component: EmptyView },
+      { path: '/profiles/:id', name: 'public-profile', component: EmptyView },
+      { path: '/fde/orders/:id', name: 'fde-order-detail', component: EmptyView },
       { path: '/intro', name: 'intro', component: EmptyView },
       { path: '/fde/hall', name: 'fde-hall', component: EmptyView },
       { path: '/fde/published', name: 'fde-published', component: EmptyView },
@@ -82,6 +85,7 @@ async function mountPage(): Promise<{ wrapper: VueWrapper; router: Router }> {
       { path: '/fde/applications', name: 'fde-applications', component: EmptyView },
       { path: '/wallet', name: 'wallet', component: EmptyView },
       { path: '/admin/users', name: 'admin-users', component: EmptyView },
+      { path: '/admin/certifications', name: 'admin-certifications', component: EmptyView },
       { path: '/admin/redeem-codes', name: 'admin-redeem-codes', component: EmptyView },
       { path: '/admin/settings', name: 'admin-settings', component: EmptyView },
     ],

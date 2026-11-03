@@ -35,6 +35,7 @@ from app.services.auth import (
     CurrentUser,
     TokenPair,
 )
+from app.services.certification import certifications_from_roles, display_name
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -54,10 +55,12 @@ def _user_response(current: CurrentUser) -> UserResponse:
     return UserResponse(
         id=current.user.id,
         username=current.user.username,
+        nickname=display_name(current.user),
         email=current.user.email,
         full_name=current.user.full_name,
         is_active=current.user.is_active,
         roles=sorted(current.roles),
+        certifications=list(certifications_from_roles(current.roles)),
         permissions=[
             PermissionItem(object=object_pattern, action=action)
             for object_pattern, action in current.permissions
@@ -100,7 +103,6 @@ async def register(
             session,
             username=payload.username,
             email=payload.email,
-            full_name=payload.full_name,
             password=payload.password,
         )
         current = await service.resolve_user(session, pair.user_id)

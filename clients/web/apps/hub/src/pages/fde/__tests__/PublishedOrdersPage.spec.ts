@@ -62,7 +62,7 @@ const inProgressOrder = buildOrderView({
   publisherName: 'Luna',
   engineerId: '9',
   engineerName: '工程师阿远',
-  engineerCertification: 'engineer',
+  engineerCertifications: ['realname', 'engineer'],
   createdAt: '2026-10-30T00:00:00.000Z',
 })
 
@@ -104,6 +104,9 @@ async function mountPage(): Promise<MountResult> {
     history: createMemoryHistory(),
     routes: [
       { path: '/login', name: 'login', component: EmptyView },
+      { path: '/profile', name: 'profile', component: EmptyView },
+      { path: '/profiles/:id', name: 'public-profile', component: EmptyView },
+      { path: '/fde/orders/:id', name: 'fde-order-detail', component: EmptyView },
       { path: '/intro', name: 'intro', component: EmptyView },
       { path: '/fde/hall', name: 'fde-hall', component: EmptyView },
       { path: '/fde/published', name: 'fde-published', component: EmptyView },
@@ -316,7 +319,7 @@ describe('PublishedOrdersPage', () => {
           status: 'pending',
           order: inProgressOrder,
           applicantName: '工程师阿远',
-          applicantCertification: 'engineer',
+          applicantCertifications: ['realname', 'engineer'],
         }),
       ]),
     )

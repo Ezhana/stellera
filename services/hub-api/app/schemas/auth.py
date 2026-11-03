@@ -13,22 +13,16 @@ class LoginRequest(BaseModel):
 
 
 class RegisterRequest(BaseModel):
-    """公开注册：用户名 / 邮箱统一小写，注册成功即获得 member 角色。"""
+    """公开注册：只需用户名 / 邮箱 / 密码，注册成功即获得 member 角色。"""
 
     username: str = Field(min_length=3, max_length=64, pattern=r"^[a-z0-9_.-]+$")
     email: str = Field(max_length=320, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-    full_name: str = Field(min_length=1, max_length=128)
     password: str = Field(min_length=8, max_length=128)
 
     @field_validator("username", "email", mode="before")
     @classmethod
     def _normalize_identity(cls, value: object) -> object:
         return value.strip().lower() if isinstance(value, str) else value
-
-    @field_validator("full_name", mode="before")
-    @classmethod
-    def _strip_full_name(cls, value: object) -> object:
-        return value.strip() if isinstance(value, str) else value
 
 
 class RefreshRequest(BaseModel):
@@ -56,10 +50,13 @@ class UserResponse(BaseModel):
 
     id: int
     username: str
+    nickname: str
     email: str
     full_name: str | None
     is_active: bool
     roles: list[str]
+    # 认证列表由角色派生，顺序固定为 realname、enterprise、engineer。
+    certifications: list[str]
     # 该用户经角色继承后的全部 Casbin 隐式权限（去重、按 object/action 排序）。
     permissions: list[PermissionItem]
 

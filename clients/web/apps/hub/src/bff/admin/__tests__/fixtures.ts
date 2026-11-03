@@ -1,4 +1,6 @@
 import type {
+  AdminCertificationApplicationListModel,
+  AdminCertificationApplicationView,
   AdminRedeemCodeBatch,
   AdminRedeemCodeListModel,
   AdminRedeemCodeView,
@@ -9,6 +11,8 @@ import type {
 } from '@/models'
 
 import type {
+  AdminCertificationApplicationDto,
+  AdminCertificationApplicationListDto,
   AdminRedeemCodeDto,
   AdminRedeemCodeListDto,
   AdminRoleDto,
@@ -19,18 +23,25 @@ import type {
   AdminUserListDto,
   CreateRedeemCodeResponseDto,
 } from '../dto'
-import { toAdminRedeemCodeView, toAdminSettingsModel, toAdminUserView } from '../mapper'
+import { buildCertificationApplicationDto } from '../../profile/__tests__/fixtures'
+import {
+  toAdminCertificationApplicationView,
+  toAdminRedeemCodeView,
+  toAdminSettingsModel,
+  toAdminUserView,
+} from '../mapper'
 
 /** Deterministic DTO/view fixtures shared by the admin BFF and page tests. */
 export function buildAdminUserDto(overrides: Partial<AdminUserDto> = {}): AdminUserDto {
   return {
     id: 7,
     username: 'luna',
+    nickname: 'Luna Chen',
     email: 'luna@example.com',
     full_name: 'Luna Chen',
     is_active: true,
-    roles: ['enterprise'],
-    certification: 'enterprise',
+    roles: ['realname', 'enterprise'],
+    certifications: ['realname', 'enterprise'],
     balance_cents: 1_000_000,
     created_at: '2026-10-01T02:30:00.000Z',
     ...overrides,
@@ -52,6 +63,46 @@ export function buildAdminUserListDto(
     page_size: 20,
     ...overrides,
   }
+}
+
+export function buildAdminCertificationApplicationDto(
+  overrides: Partial<AdminCertificationApplicationDto> = {},
+): AdminCertificationApplicationDto {
+  return {
+    ...buildCertificationApplicationDto(),
+    user: {
+      id: 6,
+      username: 'member',
+      nickname: '会员（演示）',
+      email: 'member@example.com',
+      roles: ['member', 'realname'],
+      certifications: ['realname'],
+    },
+    ...overrides,
+  }
+}
+
+export function buildAdminCertificationApplicationView(
+  overrides: Partial<AdminCertificationApplicationView> = {},
+): AdminCertificationApplicationView {
+  return {
+    ...toAdminCertificationApplicationView(buildAdminCertificationApplicationDto()),
+    ...overrides,
+  }
+}
+
+export function buildAdminCertificationApplicationListDto(
+  items: AdminCertificationApplicationDto[] = [buildAdminCertificationApplicationDto()],
+  overrides: Partial<AdminCertificationApplicationListDto> = {},
+): AdminCertificationApplicationListDto {
+  return { items, total: items.length, page: 1, page_size: 20, ...overrides }
+}
+
+export function buildAdminCertificationApplicationListModel(
+  applications: AdminCertificationApplicationView[] = [buildAdminCertificationApplicationView()],
+  overrides: Partial<AdminCertificationApplicationListModel> = {},
+): AdminCertificationApplicationListModel {
+  return { applications, total: applications.length, page: 1, pageSize: 20, ...overrides }
 }
 
 export function buildAdminRoleDto(overrides: Partial<AdminRoleDto> = {}): AdminRoleDto {

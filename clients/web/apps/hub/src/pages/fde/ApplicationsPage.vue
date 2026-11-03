@@ -341,13 +341,14 @@ onMounted(() => {
                   <dt>申请人</dt>
                   <dd>
                     <span>{{ application.applicantName }}</span>
-                    <CertificationMark :certification="application.applicantCertification" />
+                    <CertificationMark :certifications="application.applicantCertifications" />
                   </dd>
                 </div>
                 <div v-if="application.reviewerName" class="application-card__fact">
                   <dt>审批人</dt>
                   <dd>
                     <span>{{ application.reviewerName }}</span>
+                    <CertificationMark :certifications="application.reviewerCertifications" />
                     <span v-if="application.reviewedAtLabel" class="application-card__time">
                       {{ application.reviewedAtLabel }}
                     </span>
@@ -359,7 +360,9 @@ onMounted(() => {
                 申请说明：{{ application.message }}
               </p>
               <p v-if="application.reviewNote" class="application-card__note">
-                审批意见：{{ application.reviewNote }}
+                {{ application.status === 'rejected' ? '驳回理由' : '审批意见' }}：{{
+                  application.reviewNote
+                }}
               </p>
 
               <div v-if="application.status === 'pending'" class="application-card__actions">

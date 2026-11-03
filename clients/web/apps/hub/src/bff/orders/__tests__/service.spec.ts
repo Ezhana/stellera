@@ -85,6 +85,8 @@ describe('OrdersBff', () => {
     expect(gateway.getOrder).toHaveBeenCalledWith('token-1', '42')
     expect(detail.logs).toHaveLength(1)
     expect(detail.logs[0]?.authorName).toBe('工程师阿远')
+    expect(detail.applications).toHaveLength(1)
+    expect(detail.applications[0]?.applicantName).toBe('会员（演示）')
   })
 
   it('passes create input through and maps the created order', async () => {

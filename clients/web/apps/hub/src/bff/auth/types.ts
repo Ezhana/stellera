@@ -4,10 +4,9 @@ export interface LoginCredentials {
   password: string
 }
 
-/** Public registration payload; the page validates the same constraints before submitting. */
+/** Public registration payload; the backend generates the nickname the user may edit later. */
 export interface RegisterCredentials {
   username: string
   email: string
-  fullName: string
   password: string
 }

@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { certificationApplicationDtoSchema } from '../profile/dto'
+
 /**
  * Wire schemas for the admin API.
  *
@@ -13,6 +15,10 @@ const idDtoSchema = z.union([z.number(), z.string()])
 export const adminUserDtoSchema = z.object({
   id: idDtoSchema,
   username: z.string(),
+  nickname: z
+    .string()
+    .nullish()
+    .transform((value) => value ?? null),
   email: z
     .string()
     .nullish()
@@ -29,10 +35,10 @@ export const adminUserDtoSchema = z.object({
     .array(z.string())
     .nullish()
     .transform((value) => value ?? []),
-  certification: z
-    .string()
+  certifications: z
+    .array(z.string())
     .nullish()
-    .transform((value) => value ?? null),
+    .transform((value) => value ?? []),
   balance_cents: z
     .number()
     .nullish()
@@ -46,6 +52,50 @@ export const adminUserDtoSchema = z.object({
 export const adminUserListDtoSchema = z.object({
   items: z
     .array(adminUserDtoSchema)
+    .nullish()
+    .transform((value) => value ?? []),
+  total: z
+    .number()
+    .nullish()
+    .transform((value) => value ?? 0),
+  page: z
+    .number()
+    .nullish()
+    .transform((value) => value ?? 1),
+  page_size: z
+    .number()
+    .nullish()
+    .transform((value) => value ?? 0),
+})
+
+const adminCertificationUserDtoSchema = z.object({
+  id: idDtoSchema,
+  username: z.string(),
+  nickname: z
+    .string()
+    .nullish()
+    .transform((value) => value ?? null),
+  email: z
+    .string()
+    .nullish()
+    .transform((value) => value ?? null),
+  roles: z
+    .array(z.string())
+    .nullish()
+    .transform((value) => value ?? []),
+  certifications: z
+    .array(z.string())
+    .nullish()
+    .transform((value) => value ?? []),
+})
+
+export const adminCertificationApplicationDtoSchema = certificationApplicationDtoSchema.extend({
+  user: adminCertificationUserDtoSchema.nullish().transform((value) => value ?? null),
+})
+
+export const adminCertificationApplicationListDtoSchema = z.object({
+  items: z
+    .array(adminCertificationApplicationDtoSchema)
     .nullish()
     .transform((value) => value ?? []),
   total: z
@@ -177,6 +227,12 @@ export const adminSettingsDtoSchema = z.object({
 
 export type AdminUserDto = z.infer<typeof adminUserDtoSchema>
 export type AdminUserListDto = z.infer<typeof adminUserListDtoSchema>
+export type AdminCertificationApplicationDto = z.infer<
+  typeof adminCertificationApplicationDtoSchema
+>
+export type AdminCertificationApplicationListDto = z.infer<
+  typeof adminCertificationApplicationListDtoSchema
+>
 export type AdminRoleDto = z.infer<typeof adminRoleDtoSchema>
 export type AdminRoleListDto = z.infer<typeof adminRoleListDtoSchema>
 export type AdminRedeemCodeDto = z.infer<typeof adminRedeemCodeDtoSchema>

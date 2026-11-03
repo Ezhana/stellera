@@ -91,3 +91,23 @@ def login(
 
 def auth_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def register(
+    client: TestClient,
+    username: str,
+    *,
+    email: str | None = None,
+    password: str = "secret123",
+) -> dict:
+    """公开注册一个会员账号，返回登录响应体（含 user 与令牌）。"""
+    response = client.post(
+        f"{API_V1}/auth/register",
+        json={
+            "username": username,
+            "email": email or f"{username}@example.com",
+            "password": password,
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()

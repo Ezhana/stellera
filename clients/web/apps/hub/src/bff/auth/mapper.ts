@@ -1,6 +1,6 @@
 import type { HubCapabilities, PermissionGroupView, RoleView, ViewerProfile } from '@/models'
 
-import { certificationFromRoles } from '../certification'
+import { certificationsFromRoles, normalizeCertifications } from '../certification'
 import { actionOrder, describeActions, describeObject, groupOrder } from '../describe'
 import { permissionAllows, type PermissionLike } from '../permissions'
 import type { PermissionDto, UserDto } from './dto'
@@ -8,6 +8,7 @@ import type { PermissionDto, UserDto } from './dto'
 const ROLE_META: Readonly<Record<string, { label: string; tone: RoleView['tone'] }>> = {
   admin: { label: '管理员', tone: 'accent' },
   member: { label: '会员', tone: 'default' },
+  realname: { label: '实名认证', tone: 'info' },
   enterprise: { label: '企业', tone: 'accent' },
   engineer: { label: '工程师', tone: 'success' },
 }
@@ -31,22 +32,26 @@ export function describeRole(key: string): RoleView {
 /** Map the backend user DTO into the stable viewer page model. */
 export function toViewerProfile(user: UserDto): ViewerProfile {
   const username = user.username
-  const fullName = normalizeOptional(user.full_name)
-  const displayName = fullName ?? username
+  const nickname = normalizeOptional(user.nickname)
+  const displayName = nickname ?? normalizeOptional(user.full_name) ?? username
   const status = user.is_active === false ? 'inactive' : 'active'
   const roles = toRoleViews(user.roles)
   const permissions = user.permissions ?? []
+  const certifications = normalizeCertifications(user.certifications)
+  const resolvedCertifications =
+    certifications.length > 0 ? certifications : certificationsFromRoles(user.roles)
 
   return {
     id: String(user.id),
     username,
+    nickname: nickname ?? displayName,
     displayName,
     email: normalizeOptional(user.email),
     initials: deriveInitials(displayName),
     status,
     statusLabel: status === 'active' ? '已启用' : '已停用',
     isAdmin: roles.some((role) => role.key === 'admin'),
-    certification: certificationFromRoles(user.roles),
+    certifications: resolvedCertifications,
     roles,
     permissionGroups: toPermissionGroups(permissions),
     permissionCount: permissions.length,

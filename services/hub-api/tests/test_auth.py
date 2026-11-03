@@ -44,7 +44,6 @@ def _register(
     *,
     username: str = "alice",
     email: str = "alice@example.com",
-    full_name: str = "Alice",
     password: str = "secret123",
 ):
     return client.post(
@@ -52,7 +51,6 @@ def _register(
         json={
             "username": username,
             "email": email,
-            "full_name": full_name,
             "password": password,
         },
     )
@@ -149,9 +147,11 @@ def test_me_returns_current_user_and_roles(client: TestClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["username"] == ADMIN_USERNAME
+    assert body["nickname"] == "管理员"
     assert body["email"] == "admin@example.com"
     assert body["is_active"] is True
     assert body["roles"] == ["admin"]
+    assert body["certifications"] == []
     # 来自 Casbin implicit permissions 的权限清单。
     assert {"object": "/api/v1/auth/me", "action": "^GET$"} in body["permissions"]
     assert {"object": "/api/v1/auth/logout", "action": "^POST$"} in body["permissions"]
@@ -178,9 +178,12 @@ def test_register_returns_member_user_and_usable_token(client: TestClient) -> No
     user = body["user"]
     assert user["username"] == "alice"
     assert user["email"] == "alice@example.com"
-    assert user["full_name"] == "Alice"
+    # 注册不再收 full_name：实名只由实名认证审核写入，昵称按 id 自动生成。
+    assert user["full_name"] is None
+    assert user["nickname"] == f"用户{user['id']:06d}"
     assert user["is_active"] is True
     assert user["roles"] == ["member"]
+    assert user["certifications"] == []
     # member 继承 authenticated：钱包与订单端点立即可用。
     assert {"object": "/api/v1/wallet", "action": "^GET$"} in user["permissions"]
     assert ("/api/v1/fde/orders", "^GET$") in {
@@ -196,14 +199,13 @@ def test_register_normalizes_username_and_email(client: TestClient) -> None:
         client,
         username="  Alice ",
         email="  Alice@Example.COM ",
-        full_name="  Alice  ",
     )
 
     assert response.status_code == 201, response.text
     user = response.json()["user"]
     assert user["username"] == "alice"
     assert user["email"] == "alice@example.com"
-    assert user["full_name"] == "Alice"
+    assert user["full_name"] is None
 
     # 归一化后可以用大小写不敏感的用户名登录。
     pair = login(client, "ALICE", "secret123")
@@ -225,18 +227,12 @@ def test_register_duplicate_username_or_email_conflicts(client: TestClient) -> N
 @pytest.mark.parametrize(
     "payload",
     [
-        {"username": "ab", "email": "a@example.com", "full_name": "A", "password": "secret123"},
-        {"username": "has space", "email": "a@example.com", "full_name": "A", "password": "x" * 9},
-        {"username": "Alice!", "email": "a@example.com", "full_name": "A", "password": "x" * 9},
-        {"username": "alice", "email": "not-an-email", "full_name": "A", "password": "x" * 9},
-        {"username": "alice", "email": "a@example.com", "full_name": "   ", "password": "x" * 9},
-        {"username": "alice", "email": "a@example.com", "full_name": "A", "password": "short"},
-        {
-            "username": "alice",
-            "email": "a@example.com",
-            "full_name": "A" * 129,
-            "password": "x" * 9,
-        },
+        {"username": "ab", "email": "a@example.com", "password": "secret123"},
+        {"username": "has space", "email": "a@example.com", "password": "x" * 9},
+        {"username": "Alice!", "email": "a@example.com", "password": "x" * 9},
+        {"username": "alice", "email": "not-an-email", "password": "x" * 9},
+        {"username": "alice", "email": "a@example.com", "password": "short"},
+        {"username": "a" * 65, "email": "a@example.com", "password": "x" * 9},
     ],
 )
 def test_register_validation_errors(client: TestClient, payload: dict[str, str]) -> None:

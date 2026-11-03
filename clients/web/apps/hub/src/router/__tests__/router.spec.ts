@@ -37,8 +37,15 @@ describe('router guards', () => {
     expect(await go('/fde/applications')).toMatchObject({ name: 'fde-applications' })
   })
 
+  it('lets an authenticated viewer open the profile and order detail pages', async () => {
+    expect(await go('/profile')).toMatchObject({ name: 'profile' })
+    expect(await go('/profiles/5')).toMatchObject({ name: 'public-profile' })
+    expect(await go('/fde/orders/42')).toMatchObject({ name: 'fde-order-detail' })
+  })
+
   it('redirects non-admins away from admin routes to the intro page', async () => {
     expect(await go('/admin/users')).toMatchObject({ name: 'intro' })
+    expect(await go('/admin/certifications')).toMatchObject({ name: 'intro' })
     expect(await go('/admin/redeem-codes')).toMatchObject({ name: 'intro' })
     expect(await go('/admin/settings')).toMatchObject({ name: 'intro' })
   })
@@ -47,6 +54,7 @@ describe('router guards', () => {
     authState.viewer = { isAdmin: true }
 
     expect(await go('/admin/users')).toMatchObject({ name: 'admin-users' })
+    expect(await go('/admin/certifications')).toMatchObject({ name: 'admin-certifications' })
     expect(await go('/admin/redeem-codes')).toMatchObject({ name: 'admin-redeem-codes' })
     expect(await go('/admin/settings')).toMatchObject({ name: 'admin-settings' })
   })

@@ -16,7 +16,7 @@ import { APPLICATION_STATUSES, APPLICATION_TYPES, FDE_ORDER_STATUSES } from '@/m
 
 import { formatCents, formatDateTimeLabel } from '@/lib/money'
 
-import { normalizeCertification } from '../certification'
+import { normalizeCertifications } from '../certification'
 import type {
   ApplicationDto,
   ApplicationListDto,
@@ -110,10 +110,10 @@ export function toOrderView(dto: OrderDto): FdeOrderView {
     escrowTone: escrow.tone,
     publisherId: String(dto.publisher.id),
     publisherName: dto.publisher.display_name,
-    publisherCertification: normalizeCertification(dto.publisher.certification),
+    publisherCertifications: normalizeCertifications(dto.publisher.certifications),
     engineerId: dto.engineer ? String(dto.engineer.id) : null,
     engineerName: dto.engineer?.display_name ?? null,
-    engineerCertification: normalizeCertification(dto.engineer?.certification),
+    engineerCertifications: normalizeCertifications(dto.engineer?.certifications),
     workLogCount: dto.work_log_count,
     createdAt: dto.created_at,
     publishedAtLabel: formatDateTimeLabel(dto.created_at),
@@ -128,6 +128,7 @@ export function toOrderDetailView(dto: OrderDetailDto): FdeOrderDetailView {
   return {
     ...toOrderView(dto),
     logs: dto.logs.map(toWorkLogView),
+    applications: dto.applications.map(toApplicationView),
   }
 }
 
@@ -147,9 +148,12 @@ export function toApplicationView(dto: ApplicationDto): OrderApplicationView {
     statusTone: status.tone,
     message: dto.message,
     reviewNote: dto.review_note,
+    applicantId: String(dto.applicant.id),
     applicantName: dto.applicant.display_name,
-    applicantCertification: normalizeCertification(dto.applicant.certification),
+    applicantCertifications: normalizeCertifications(dto.applicant.certifications),
+    reviewerId: dto.reviewer ? String(dto.reviewer.id) : null,
     reviewerName: dto.reviewer?.display_name ?? null,
+    reviewerCertifications: normalizeCertifications(dto.reviewer?.certifications),
     reviewedAtLabel: dto.reviewed_at ? formatDateTimeLabel(dto.reviewed_at) : null,
     createdAtLabel: formatDateTimeLabel(dto.created_at),
   }

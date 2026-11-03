@@ -6,13 +6,20 @@ const labels = (groups: ReturnType<typeof navForViewer>): string[] =>
   groups.map((group) => group.label)
 
 describe('navForViewer', () => {
-  it('shows platform, FDE orders and wallet to non-admin viewers', () => {
+  it('shows platform, account, FDE orders and wallet to non-admin viewers', () => {
     const groups = navForViewer({ isAdmin: false })
 
-    expect(labels(groups)).toEqual(['平台', 'FDE 订单', '钱包'])
+    expect(labels(groups)).toEqual(['平台', '个人', 'FDE 订单', '钱包'])
     expect(groups.some((group) => group.requiresAdmin)).toBe(false)
     expect(groups.flatMap((group) => group.children.map((leaf) => leaf.label))).toEqual(
-      expect.arrayContaining(['订单大厅', '我发布的', '我接到的', '我的申请', '我的钱包']),
+      expect.arrayContaining([
+        '个人信息',
+        '订单大厅',
+        '我发布的',
+        '我接到的',
+        '我的申请',
+        '我的钱包',
+      ]),
     )
   })
 
@@ -34,27 +41,40 @@ describe('navForViewer', () => {
     expect(fde?.children[0]?.meta).toBe('实时')
   })
 
-  it('adds the admin group with all three console pages for admins', () => {
+  it('adds the admin group with every console page for admins', () => {
     const groups = navForViewer({ isAdmin: true })
 
-    expect(labels(groups)).toEqual(['平台', 'FDE 订单', '钱包', '管理'])
+    expect(labels(groups)).toEqual(['平台', '个人', 'FDE 订单', '钱包', '管理'])
     const admin = groups.find((group) => group.key === 'admin')
     expect(admin?.requiresAdmin).toBe(true)
     expect(admin?.children.map((leaf) => leaf.routeName)).toEqual([
       'admin-users',
+      'admin-certifications',
       'admin-redeem-codes',
       'admin-settings',
     ])
-    expect(admin?.children.map((leaf) => leaf.label)).toEqual(['用户', '兑换码', '系统设置'])
+    expect(admin?.children.map((leaf) => leaf.label)).toEqual([
+      '用户',
+      '认证审核',
+      '兑换码',
+      '系统设置',
+    ])
   })
 
   it('never mutates the shared console tree', () => {
     navForViewer({ isAdmin: true })
-    expect(labels([...CONSOLE_NAV])).toEqual(['平台', 'FDE 订单', '钱包', '管理'])
+    expect(labels([...CONSOLE_NAV])).toEqual(['平台', '个人', 'FDE 订单', '钱包', '管理'])
   })
 })
 
 describe('findNavGroupForRoute', () => {
+  it('resolves the profile route in the filtered tree', () => {
+    const resolved = findNavGroupForRoute('profile', navForViewer({ isAdmin: false }))
+
+    expect(resolved?.group.key).toBe('account')
+    expect(resolved?.leaf.label).toBe('个人信息')
+  })
+
   it('resolves wallet routes in the filtered tree', () => {
     const groups = navForViewer({ isAdmin: false })
     const resolved = findNavGroupForRoute('wallet', groups)

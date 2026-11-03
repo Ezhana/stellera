@@ -5,22 +5,84 @@
 username = "member"
 email = "member@example.com"
 password = "member12345"
-full_name = "会员（演示）"
-role = "member"
+nickname = "会员（演示）"
+roles = ["member"]
 
 [[users]]
 username = "enterprise"
 email = "enterprise@example.com"
 password = "enterprise12345"
-full_name = "企业（演示）"
-role = "enterprise"
+nickname = "企业（演示）"
+full_name = "张伟"
+roles = ["member", "realname", "enterprise"]
 
 [[users]]
 username = "engineer"
 email = "engineer@example.com"
 password = "engineer12345"
-full_name = "工程师（演示）"
-role = "engineer"
+nickname = "工程师（演示）"
+full_name = "李强"
+roles = ["member", "realname", "engineer"]
+
+# 演示认证申请：企业 / 工程师各 1 条已通过实名 + 1 条已通过业务认证，
+# member 留 1 条 pending 实名申请供管理端演示审核。按 user+type 幂等写入。
+
+[[certification_applications]]
+username = "enterprise"
+type = "realname"
+status = "approved"
+real_name = "张伟"
+id_number = "310101199001011234"
+contact_phone = "13800000001"
+reviewed_by = "admin"
+review_note = "实名信息核验通过"
+days_ago = 100
+
+[[certification_applications]]
+username = "enterprise"
+type = "enterprise"
+status = "approved"
+company_name = "上海智联医疗科技有限公司"
+credit_code = "91310000MA1FL0XXXX"
+contact_name = "张伟"
+contact_phone = "13800000001"
+description = "专注医疗影像 AI 辅助诊断，已服务 12 家三甲医院。"
+reviewed_by = "admin"
+review_note = "企业资质齐全，审核通过"
+days_ago = 96
+
+[[certification_applications]]
+username = "engineer"
+type = "realname"
+status = "approved"
+real_name = "李强"
+id_number = "320101199203045678"
+contact_phone = "13900000001"
+reviewed_by = "admin"
+review_note = "实名信息核验通过"
+days_ago = 100
+
+[[certification_applications]]
+username = "engineer"
+type = "engineer"
+status = "approved"
+skills = "Python,机器学习,数据标注"
+work_years = 6
+project_experience = "主导 3 个工业质检与医疗影像项目，负责数据管线与模型交付。"
+contact_phone = "13900000001"
+reviewed_by = "admin"
+review_note = "项目经验与技能匹配"
+days_ago = 95
+
+[[certification_applications]]
+username = "member"
+type = "realname"
+status = "pending"
+real_name = "王芳"
+id_number = "440101199505067890"
+contact_phone = "13700000001"
+description = "希望完成实名认证后参与 FDE 项目协作。"
+days_ago = 2
 
 # 订单大厅首屏数据：5 条 open、3 条 in_progress、2 条 completed，
 # 行业覆盖 7 个方向，发布时间/预算/交付周期都拉开差距，方便前端演示排序与筛选。

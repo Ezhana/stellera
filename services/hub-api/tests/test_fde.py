@@ -55,7 +55,7 @@ ORDER_FIELDS = {
     "completed_at",
 }
 
-USER_REF_FIELDS = {"id", "display_name", "certification"}
+USER_REF_FIELDS = {"id", "display_name", "certifications"}
 
 APPLICATION_FIELDS = {
     "id",
@@ -297,7 +297,7 @@ def test_authenticated_user_can_list_order_hall(client: TestClient) -> None:
     assert set(first) == ORDER_FIELDS
     assert set(first["publisher"]) == USER_REF_FIELDS
     assert first["publisher"]["display_name"] == "企业（演示）"
-    assert first["publisher"]["certification"] == "enterprise"
+    assert first["publisher"]["certifications"] == ["realname", "enterprise"]
 
 
 def test_order_hall_is_ordered_newest_first(client: TestClient) -> None:
@@ -315,15 +315,15 @@ def test_order_hall_is_ordered_newest_first(client: TestClient) -> None:
 
 
 @pytest.mark.parametrize(
-    ("username", "password", "certification"),
+    ("username", "password", "certifications"),
     [
-        (MEMBER_USERNAME, MEMBER_PASSWORD, None),
-        (ENTERPRISE_USERNAME, ENTERPRISE_PASSWORD, "enterprise"),
-        (ENGINEER_USERNAME, ENGINEER_PASSWORD, "engineer"),
+        (MEMBER_USERNAME, MEMBER_PASSWORD, []),
+        (ENTERPRISE_USERNAME, ENTERPRISE_PASSWORD, ["realname", "enterprise"]),
+        (ENGINEER_USERNAME, ENGINEER_PASSWORD, ["realname", "engineer"]),
     ],
 )
 def test_any_logged_in_role_can_publish_order(
-    client: TestClient, username: str, password: str, certification: str | None
+    client: TestClient, username: str, password: str, certifications: list[str]
 ) -> None:
     pair = login(client, username, password)
     publisher_id = pair["user"]["id"]
@@ -333,10 +333,11 @@ def test_any_logged_in_role_can_publish_order(
     assert re.fullmatch(r"FDE-\d{4}-\d{4}", order["code"])
     assert order["status"] == "open"
     assert order["escrow_status"] == "held"
+    # 展示名统一取昵称；认证由角色派生（realname 可与 enterprise/engineer 叠加）。
     assert order["publisher"] == {
         "id": publisher_id,
-        "display_name": pair["user"]["full_name"],
-        "certification": certification,
+        "display_name": pair["user"]["nickname"],
+        "certifications": certifications,
     }
     assert order["engineer"] is None
     assert order["work_log_count"] == 0
@@ -351,6 +352,7 @@ def test_any_logged_in_role_can_publish_order(
     detail = client.get(f"{FDE}/orders/{order['id']}", headers=_headers(pair)).json()
     assert detail["id"] == order["id"]
     assert detail["logs"] == []
+    assert detail["applications"] == []
 
 
 def test_publish_payload_validation(client: TestClient) -> None:
@@ -385,7 +387,7 @@ def test_apply_accept_then_publisher_approves(client: TestClient) -> None:
     assert application["applicant"] == {
         "id": engineer["user"]["id"],
         "display_name": "工程师（演示）",
-        "certification": "engineer",
+        "certifications": ["realname", "engineer"],
     }
 
     # 申请人自己的“我的申请”与发布者的“收到的申请”都能看到。
@@ -408,14 +410,14 @@ def test_apply_accept_then_publisher_approves(client: TestClient) -> None:
     assert approved["reviewer"] == {
         "id": enterprise["user"]["id"],
         "display_name": "企业（演示）",
-        "certification": "enterprise",
+        "certifications": ["realname", "enterprise"],
     }
     updated_order = approved["order"]
     assert updated_order["status"] == "in_progress"
     assert updated_order["engineer"] == {
         "id": engineer["user"]["id"],
         "display_name": "工程师（演示）",
-        "certification": "engineer",
+        "certifications": ["realname", "engineer"],
     }
     assert updated_order["claimed_at"] is not None
     assert updated_order["escrow_status"] == "held"
@@ -566,7 +568,7 @@ def test_reject_application(client: TestClient) -> None:
     body = response.json()
     assert body["status"] == "rejected"
     assert body["review_note"] == "经验不匹配"
-    assert body["reviewer"]["certification"] == "enterprise"
+    assert body["reviewer"]["certifications"] == ["realname", "enterprise"]
     assert body["order"]["status"] == "open"
 
     # 被驳回后可以重新申请。
@@ -716,7 +718,7 @@ def test_assignee_submits_work_log_and_count_is_reflected(client: TestClient) ->
     assert log["author"] == {
         "id": engineer["user"]["id"],
         "display_name": "工程师（演示）",
-        "certification": "engineer",
+        "certifications": ["realname", "engineer"],
     }
     assert log["content"] == "完成数据清洗与基线模型"
     assert log["worked_hours"] == 6.5
@@ -725,7 +727,7 @@ def test_assignee_submits_work_log_and_count_is_reflected(client: TestClient) ->
     detail = client.get(f"{FDE}/orders/{in_progress['id']}", headers=_headers(enterprise)).json()
     assert detail["work_log_count"] == 1
     assert [item["id"] for item in detail["logs"]] == [log["id"]]
-    assert detail["logs"][0]["author"]["certification"] == "engineer"
+    assert detail["logs"][0]["author"]["certifications"] == ["realname", "engineer"]
 
     hall_item = _find_by_code(client, enterprise, in_progress["code"])
     assert hall_item["work_log_count"] == 1
@@ -770,7 +772,7 @@ def test_only_assignee_or_admin_can_submit_work_log(settings: Settings, client: 
     assert publisher_attempt.status_code == 403
 
     admin_log = _add_log(client, admin, in_progress["id"], content="管理员补录")
-    assert admin_log["author"]["certification"] is None
+    assert admin_log["author"]["certifications"] == []
 
 
 def test_work_log_requires_in_progress_order(client: TestClient) -> None:
@@ -940,7 +942,44 @@ def test_detail_returns_logs_oldest_first(client: TestClient) -> None:
     assert times == sorted(times)
     assert all(log["order_id"] == demo["id"] for log in detail["logs"])
     assert all(log["author"]["display_name"] == "工程师（演示）" for log in detail["logs"])
-    assert all(log["author"]["certification"] == "engineer" for log in detail["logs"])
+    assert all(
+        log["author"]["certifications"] == ["realname", "engineer"] for log in detail["logs"]
+    )
+
+
+def test_detail_includes_all_application_history(client: TestClient) -> None:
+    enterprise = login(client, ENTERPRISE_USERNAME, ENTERPRISE_PASSWORD)
+    engineer = login(client, ENGINEER_USERNAME, ENGINEER_PASSWORD)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
+    order = _publish(client, enterprise)
+
+    rejected = _apply(client, engineer, order["id"], message="申请接单")
+    client.post(
+        f"{FDE}/applications/{rejected['id']}/reject",
+        headers=_headers(enterprise),
+        json={"note": "经验不匹配"},
+    )
+    approved = _apply(client, member, order["id"], message="再次申请")
+    _approve(client, enterprise, approved["id"], note="同意接单")
+    delivery = _apply(client, member, order["id"], application_type="delivery")
+    _approve(client, enterprise, delivery["id"], note="确认交付")
+
+    detail = client.get(f"{FDE}/orders/{order['id']}", headers=_headers(enterprise)).json()
+
+    applications = detail["applications"]
+    assert [item["type"] for item in applications] == ["accept", "accept", "delivery"]
+    assert [item["status"] for item in applications] == ["rejected", "approved", "approved"]
+    times = [_parse_time(item["created_at"]) for item in applications]
+    assert times == sorted(times)
+    # 每条申请都带审批人 / 时间 / 理由，供详情页展示历史审批记录。
+    assert applications[0]["review_note"] == "经验不匹配"
+    assert applications[0]["reviewer"]["display_name"] == "企业（演示）"
+    assert applications[0]["reviewed_at"] is not None
+    assert applications[1]["review_note"] == "同意接单"
+    assert applications[2]["review_note"] == "确认交付"
+    assert all(set(item["applicant"]) == USER_REF_FIELDS for item in applications)
+    # 申请项里的订单是当前最新状态。
+    assert all(item["order"]["status"] == "completed" for item in applications)
 
 
 def test_detail_unknown_order_is_404(client: TestClient) -> None:
@@ -1197,7 +1236,7 @@ def test_admin_can_perform_all_order_actions(client: TestClient) -> None:
     application = _apply(client, admin, order["id"])
     approved = _approve(client, enterprise, application["id"])
     assert approved["order"]["engineer"]["id"] == admin["user"]["id"]
-    assert approved["order"]["engineer"]["certification"] is None
+    assert approved["order"]["engineer"]["certifications"] == []
 
     log = _add_log(client, admin, order["id"], content="管理员补录的工作日志")
     assert log["author"]["id"] == admin["user"]["id"]
@@ -1253,7 +1292,7 @@ def test_ws_broadcasts_order_created_and_updated(client: TestClient) -> None:
         assert set(created["order"]) == ORDER_FIELDS
         assert created["order"]["id"] == order["id"]
         assert created["order"]["status"] == "open"
-        assert created["order"]["publisher"]["certification"] == "enterprise"
+        assert created["order"]["publisher"]["certifications"] == ["realname", "enterprise"]
 
         # 创建申请不广播；审批通过才推送 order.updated。
         application = _apply(client, engineer, order["id"])

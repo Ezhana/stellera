@@ -1,13 +1,17 @@
 import type { Certification } from '@/models'
 
-/** Wire values are plain strings; anything unknown degrades to "not certified". */
-export function normalizeCertification(value: string | null | undefined): Certification {
-  return value === 'enterprise' || value === 'engineer' ? value : null
+/** Canonical display order across badges, lists and forms. */
+const CERTIFICATION_ORDER: readonly Certification[] = ['realname', 'enterprise', 'engineer']
+
+/** Normalize a wire list: drop unknown values, dedupe and keep the canonical order. */
+export function normalizeCertifications(
+  values: readonly string[] | null | undefined,
+): Certification[] {
+  const present = new Set<string>(values ?? [])
+  return CERTIFICATION_ORDER.filter((certification) => present.has(certification))
 }
 
-/** Viewer certification is derived from roles; admin never implies a certification. */
-export function certificationFromRoles(roleKeys: readonly string[]): Certification {
-  if (roleKeys.includes('enterprise')) return 'enterprise'
-  if (roleKeys.includes('engineer')) return 'engineer'
-  return null
+/** Fallback for payloads that only carry roles: each certification maps to a role. */
+export function certificationsFromRoles(roleKeys: readonly string[]): Certification[] {
+  return CERTIFICATION_ORDER.filter((certification) => roleKeys.includes(certification))
 }

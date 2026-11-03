@@ -11,6 +11,8 @@ export { HttpAdminGateway } from './gateway'
 export type { AdminGateway } from './gateway'
 export {
   formatRedeemCodeStatus,
+  toAdminCertificationApplicationListModel,
+  toAdminCertificationApplicationView,
   toAdminRedeemCodeBatch,
   toAdminRedeemCodeListModel,
   toAdminRedeemCodeView,
@@ -21,7 +23,7 @@ export {
   toAdminUserView,
 } from './mapper'
 export type {
-  AdminCertificationInput,
+  AdminCertificationApplicationFilter,
   AdminRedeemCodeFilter,
   AdminUserFilter,
   AdminWalletAdjustmentInput,

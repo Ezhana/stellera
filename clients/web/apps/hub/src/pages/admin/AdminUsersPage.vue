@@ -3,7 +3,6 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { z } from 'zod'
 
 import { adminBff } from '@/bff/admin'
-import type { AdminCertificationInput } from '@/bff/admin'
 import { BffError } from '@/bff/errors'
 import PageHeader from '@/components/console/PageHeader.vue'
 import CertificationMark from '@/components/identity/CertificationMark.vue'
@@ -16,13 +15,6 @@ import type { AdminRoleOption, AdminUserView } from '@/models'
 import { useAuthStore } from '@/stores/auth'
 
 const PAGE_SIZE = 20
-
-/** Certification select options; `none` revokes the enterprise/engineer role on the backend. */
-const CERTIFICATION_OPTIONS: readonly { value: AdminCertificationInput; label: string }[] = [
-  { value: 'none', label: '未认证' },
-  { value: 'enterprise', label: '企业认证' },
-  { value: 'engineer', label: '工程师认证' },
-]
 
 const auth = useAuthStore()
 const viewer = computed(() => auth.viewer)
@@ -42,10 +34,9 @@ const roleOptions = ref<AdminRoleOption[]>([])
 const editingUserId = ref<string | null>(null)
 const pendingUserId = ref<string | null>(null)
 
-const fullName = ref('')
+const nickname = ref('')
 const email = ref('')
-const certification = ref<AdminCertificationInput>('none')
-const profileErrors = reactive<{ fullName?: string; email?: string }>({})
+const profileErrors = reactive<{ nickname?: string; email?: string }>({})
 const savingProfile = ref(false)
 
 const walletDirection = ref<'credit' | 'debit'>('credit')
@@ -57,12 +48,12 @@ const adjustingWallet = ref(false)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
 
 const profileSchema = z.object({
-  fullName: z.string().trim().min(1, '请输入姓名').max(128, '姓名长度不能超过 128 个字符'),
+  nickname: z.string().trim().min(1, '请输入昵称').max(64, '昵称长度不能超过 64 个字符'),
   email: z
     .string()
     .trim()
     .min(1, '请输入邮箱')
-    .max(128, '邮箱长度不能超过 128 个字符')
+    .max(320, '邮箱长度不能超过 320 个字符')
     .email('请输入有效的邮箱地址'),
 })
 
@@ -160,7 +151,7 @@ function resetWalletForm(): void {
 
 function closeEditor(): void {
   editingUserId.value = null
-  profileErrors.fullName = undefined
+  profileErrors.nickname = undefined
   profileErrors.email = undefined
   resetWalletForm()
 }
@@ -173,27 +164,26 @@ function openEditor(user: AdminUserView): void {
     return
   }
   editingUserId.value = user.id
-  fullName.value = user.fullName ?? user.displayName
+  nickname.value = user.nickname
   email.value = user.email ?? ''
-  certification.value = user.certification ?? 'none'
-  profileErrors.fullName = undefined
+  profileErrors.nickname = undefined
   profileErrors.email = undefined
   resetWalletForm()
 }
 
 async function saveProfile(user: AdminUserView): Promise<void> {
   if (savingProfile.value) return
-  profileErrors.fullName = undefined
+  profileErrors.nickname = undefined
   profileErrors.email = undefined
 
   const parsed = profileSchema.safeParse({
-    fullName: fullName.value,
+    nickname: nickname.value,
     email: email.value,
   })
   if (!parsed.success) {
     for (const issue of parsed.error.issues) {
       const field = issue.path[0]
-      if (field === 'fullName' && !profileErrors.fullName) profileErrors.fullName = issue.message
+      if (field === 'nickname' && !profileErrors.nickname) profileErrors.nickname = issue.message
       if (field === 'email' && !profileErrors.email) profileErrors.email = issue.message
     }
     return
@@ -204,11 +194,10 @@ async function saveProfile(user: AdminUserView): Promise<void> {
   actionError.value = ''
   try {
     await adminBff.updateUser(user.id, {
-      fullName: parsed.data.fullName,
+      nickname: parsed.data.nickname,
       email: parsed.data.email,
-      certification: certification.value,
     })
-    successMessage.value = `已保存 ${parsed.data.fullName} 的资料与认证。`
+    successMessage.value = `已保存 ${parsed.data.nickname} 的资料。`
     closeEditor()
     await loadUsers(false)
   } catch (error) {
@@ -288,7 +277,7 @@ onMounted(async () => {
       <PageHeader
         eyebrow="ADMIN · USERS"
         title="用户管理"
-        description="编辑用户资料、认证与启用状态，并为用户调整钱包余额。"
+        description="编辑用户昵称与启用状态，并为用户调整钱包余额；认证由认证审核流程授予。"
       >
         <template #actions>
           <UiButton variant="secondary" size="sm" :loading="loading" @click="loadUsers()">
@@ -362,6 +351,7 @@ onMounted(async () => {
               <thead>
                 <tr>
                   <th scope="col">用户</th>
+                  <th scope="col">实名</th>
                   <th scope="col">邮箱</th>
                   <th scope="col">认证</th>
                   <th scope="col">角色</th>
@@ -386,12 +376,15 @@ onMounted(async () => {
                       </div>
                     </td>
                     <td class="admin-table__cell admin-table__cell--muted">
+                      {{ user.fullName ?? '—' }}
+                    </td>
+                    <td class="admin-table__cell admin-table__cell--muted">
                       {{ user.email ?? '未登记邮箱' }}
                     </td>
                     <td class="admin-table__cell">
                       <CertificationMark
-                        v-if="user.certification"
-                        :certification="user.certification"
+                        v-if="user.certifications.length"
+                        :certifications="user.certifications"
                       />
                       <span v-else class="admin-table__cell--muted">未认证</span>
                     </td>
@@ -432,17 +425,17 @@ onMounted(async () => {
                   </tr>
 
                   <tr v-if="editingUserId === user.id" class="admin-table__row--editor">
-                    <td class="admin-table__cell" colspan="8">
+                    <td class="admin-table__cell" colspan="9">
                       <div class="admin-editor">
                         <section class="admin-editor__section" aria-label="用户资料">
                           <p class="admin-editor__title">编辑「{{ user.displayName }}」的资料</p>
                           <div class="admin-editor__grid">
                             <UiInput
-                              v-model="fullName"
-                              label="姓名"
-                              name="edit-full-name"
-                              :maxlength="128"
-                              :error="profileErrors.fullName"
+                              v-model="nickname"
+                              label="昵称"
+                              name="edit-nickname"
+                              :maxlength="64"
+                              :error="profileErrors.nickname"
                               :disabled="savingProfile"
                             />
                             <UiInput
@@ -450,33 +443,14 @@ onMounted(async () => {
                               label="邮箱"
                               name="edit-email"
                               type="email"
-                              :maxlength="128"
+                              :maxlength="320"
                               :error="profileErrors.email"
                               :disabled="savingProfile"
                             />
-                            <div class="admin-editor__field">
-                              <label class="admin-editor__label" for="edit-certification">
-                                认证
-                              </label>
-                              <select
-                                id="edit-certification"
-                                v-model="certification"
-                                class="admin-select"
-                                :disabled="savingProfile"
-                              >
-                                <option
-                                  v-for="option in CERTIFICATION_OPTIONS"
-                                  :key="option.value"
-                                  :value="option.value"
-                                >
-                                  {{ option.label }}
-                                </option>
-                              </select>
-                              <p class="admin-editor__help">
-                                认证即授予企业/工程师角色，选择未认证会取消对应角色。
-                              </p>
-                            </div>
                           </div>
+                          <p class="admin-editor__help">
+                            昵称会展示在订单与申请中；实名、企业、工程师认证由认证审核授予。
+                          </p>
                           <div class="admin-editor__actions">
                             <UiButton size="sm" :loading="savingProfile" @click="saveProfile(user)">
                               保存资料

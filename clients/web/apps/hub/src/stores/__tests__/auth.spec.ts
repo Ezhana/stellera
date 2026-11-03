@@ -23,7 +23,8 @@ const viewer: ViewerProfile = {
   status: 'active',
   statusLabel: '已启用',
   isAdmin: true,
-  certification: null,
+  nickname: 'Luna',
+  certifications: [],
   roles: [{ key: 'admin', label: '管理员', tone: 'accent' }],
   permissionGroups: [
     {
@@ -83,7 +84,6 @@ describe('auth store', () => {
       {
         username: 'newbie',
         email: 'newbie@example.com',
-        fullName: '新会员',
         password: 'secret123',
       },
       false,
@@ -93,7 +93,6 @@ describe('auth store', () => {
       {
         username: 'newbie',
         email: 'newbie@example.com',
-        fullName: '新会员',
         password: 'secret123',
       },
       false,
@@ -110,10 +109,7 @@ describe('auth store', () => {
     const store = useAuthStore()
 
     await expect(
-      store.register(
-        { username: 'luna', email: 'luna@example.com', fullName: 'Luna', password: 'secret123' },
-        false,
-      ),
+      store.register({ username: 'luna', email: 'luna@example.com', password: 'secret123' }, false),
     ).rejects.toThrow('conflict')
     expect(store.session).toBeNull()
     expect(store.status).toBe('anonymous')

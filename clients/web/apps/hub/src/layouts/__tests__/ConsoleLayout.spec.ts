@@ -23,7 +23,8 @@ const enterpriseViewer: ViewerProfile = {
   status: 'active',
   statusLabel: '已启用',
   isAdmin: false,
-  certification: 'enterprise',
+  nickname: '企业（演示）',
+  certifications: ['realname', 'enterprise'],
   roles: [{ key: 'enterprise', label: '企业', tone: 'accent' }],
   permissionGroups: [],
   permissionCount: 0,
@@ -42,7 +43,7 @@ const adminViewer: ViewerProfile = {
   username: 'admin',
   displayName: '系统管理员',
   isAdmin: true,
-  certification: null,
+  certifications: [],
   roles: [{ key: 'admin', label: '管理员', tone: 'accent' }],
   capabilities: { ...enterpriseViewer.capabilities, manageAdmin: true },
 }
@@ -63,7 +64,11 @@ async function mountLayout(
       { path: '/fde/assigned', name: 'fde-assigned', component: EmptyView },
       { path: '/fde/applications', name: 'fde-applications', component: EmptyView },
       { path: '/wallet', name: 'wallet', component: EmptyView },
+      { path: '/profile', name: 'profile', component: EmptyView },
+      { path: '/profiles/:id', name: 'public-profile', component: EmptyView },
+      { path: '/fde/orders/:id', name: 'fde-order-detail', component: EmptyView },
       { path: '/admin/users', name: 'admin-users', component: EmptyView },
+      { path: '/admin/certifications', name: 'admin-certifications', component: EmptyView },
       { path: '/admin/redeem-codes', name: 'admin-redeem-codes', component: EmptyView },
       { path: '/admin/settings', name: 'admin-settings', component: EmptyView },
     ],
@@ -90,13 +95,14 @@ describe('ConsoleLayout', () => {
     const groupLabels = wrapper
       .findAll('.console-layout__nav-group-label')
       .map((node) => node.text())
-    expect(groupLabels).toEqual(['平台', 'FDE 订单', '钱包'])
+    expect(groupLabels).toEqual(['平台', '个人', 'FDE 订单', '钱包'])
 
     const links = wrapper.findAll('.console-layout__nav-item')
     const labels = links.map((node) => node.text().replace(/\s+/g, ''))
     expect(labels).toEqual(
       expect.arrayContaining([
         '平台简介',
+        '个人信息',
         '订单大厅实时',
         '我发布的',
         '我接到的',
@@ -113,7 +119,7 @@ describe('ConsoleLayout', () => {
     const groupLabels = wrapper
       .findAll('.console-layout__nav-group-label')
       .map((node) => node.text())
-    expect(groupLabels).toEqual(['平台', 'FDE 订单', '钱包'])
+    expect(groupLabels).toEqual(['平台', '个人', 'FDE 订单', '钱包'])
     expect(wrapper.text()).not.toContain('管理')
     expect(wrapper.find('#console-nav-admin').exists()).toBe(false)
   })
@@ -124,11 +130,11 @@ describe('ConsoleLayout', () => {
     const groupLabels = wrapper
       .findAll('.console-layout__nav-group-label')
       .map((node) => node.text())
-    expect(groupLabels).toEqual(['平台', 'FDE 订单', '钱包', '管理'])
+    expect(groupLabels).toEqual(['平台', '个人', 'FDE 订单', '钱包', '管理'])
 
     const links = wrapper.findAll('.console-layout__nav-item')
     expect(links.map((node) => node.text().replace(/\s+/g, ''))).toEqual(
-      expect.arrayContaining(['用户', '兑换码', '系统设置']),
+      expect.arrayContaining(['用户', '认证审核', '兑换码', '系统设置']),
     )
 
     const active = wrapper.find('.console-layout__nav-item.is-active')
@@ -174,7 +180,11 @@ describe('ConsoleLayout', () => {
     expect(wrapper.text()).toContain('企业（演示）')
     expect(wrapper.text()).toContain('实时')
     expect(wrapper.text()).toContain('退出登录')
-    expect(wrapper.find('.certification-mark').text()).toBe('企业认证')
+    expect(wrapper.findAll('.certification-mark .ui-chip').map((node) => node.text())).toEqual([
+      '实名认证',
+      '企业认证',
+    ])
+    expect(wrapper.find('a[href="/profiles/4"]').text()).toBe('公开主页')
   })
 
   it('does not render a certification badge for admin-only viewers', async () => {

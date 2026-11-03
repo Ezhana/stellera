@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { RouterLink } from 'vue-router'
+
 import CertificationMark from '@/components/identity/CertificationMark.vue'
 import UiChip from '@/components/ui/UiChip.vue'
 import type { FdeOrderView } from '@/models'
@@ -49,7 +51,12 @@ withDefaults(defineProps<OrderTableProps>(), {
           :class="{ 'is-highlighted': order.id === highlightedId }"
         >
           <td class="order-table__cell order-table__cell--task">
-            <p class="order-table__title">{{ order.title }}</p>
+            <RouterLink
+              class="order-table__title"
+              :to="{ name: 'fde-order-detail', params: { id: order.id } }"
+            >
+              {{ order.title }}
+            </RouterLink>
             <div class="order-table__meta">
               <span class="order-table__code">{{ order.code }}</span>
               <UiChip v-if="order.publisherId === viewerId" variant="accent">我的发布</UiChip>
@@ -58,13 +65,13 @@ withDefaults(defineProps<OrderTableProps>(), {
           <td class="order-table__cell">
             <div class="order-table__party">
               <span class="order-table__party-name">{{ order.publisherName }}</span>
-              <CertificationMark :certification="order.publisherCertification" />
+              <CertificationMark :certifications="order.publisherCertifications" />
             </div>
           </td>
           <td class="order-table__cell">
             <div v-if="order.engineerName" class="order-table__party">
               <span class="order-table__party-name">{{ order.engineerName }}</span>
-              <CertificationMark :certification="order.engineerCertification" />
+              <CertificationMark :certifications="order.engineerCertifications" />
             </div>
             <span v-else class="order-table__hint">待接单</span>
           </td>
@@ -173,11 +180,16 @@ withDefaults(defineProps<OrderTableProps>(), {
 }
 
 .order-table__title {
+  display: inline-block;
   color: var(--color-fg-strong);
   font-size: var(--font-size-small);
   font-weight: var(--font-weight-medium);
   line-height: 1.4;
   overflow-wrap: anywhere;
+}
+
+.order-table__title:hover {
+  color: var(--color-accent-hover);
 }
 
 .order-table__meta {

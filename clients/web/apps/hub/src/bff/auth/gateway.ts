@@ -51,7 +51,6 @@ export class HttpAuthGateway implements AuthGateway {
       body: {
         username: credentials.username,
         email: credentials.email,
-        full_name: credentials.fullName,
         password: credentials.password,
       },
     })

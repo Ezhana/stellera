@@ -27,7 +27,7 @@ export function buildOrderDto(overrides: Partial<OrderDto> = {}): OrderDto {
     price_cents: 8_600_000,
     status: 'open',
     escrow_status: 'held',
-    publisher: { id: 7, display_name: 'Luna', certification: 'enterprise' },
+    publisher: { id: 7, display_name: 'Luna', certifications: ['realname', 'enterprise'] },
     engineer: null,
     work_log_count: 0,
     created_at: '2026-11-01T06:20:00.000Z',
@@ -59,7 +59,7 @@ export function buildWorkLogDto(overrides: Partial<WorkLogDto> = {}): WorkLogDto
   return {
     id: 11,
     order_id: 1,
-    author: { id: 9, display_name: '工程师阿远', certification: 'engineer' },
+    author: { id: 9, display_name: '工程师阿远', certifications: ['realname', 'engineer'] },
     content: '完成首批 200 例标注，已提交质检。',
     worked_hours: 6,
     created_at: '2026-11-01T10:30:00.000Z',
@@ -71,6 +71,7 @@ export function buildOrderDetailDto(overrides: Partial<OrderDetailDto> = {}): Or
   return {
     ...buildOrderDto(),
     logs: [buildWorkLogDto()],
+    applications: [buildApplicationDto()],
     ...overrides,
   }
 }
@@ -83,7 +84,7 @@ export function buildApplicationDto(overrides: Partial<ApplicationDto> = {}): Ap
     status: 'pending',
     message: null,
     review_note: null,
-    applicant: { id: 6, display_name: '会员（演示）', certification: null },
+    applicant: { id: 6, display_name: '会员（演示）', certifications: [] },
     reviewer: null,
     reviewed_at: null,
     created_at: '2026-11-01T06:30:00.000Z',
@@ -133,7 +134,8 @@ export function buildViewer(overrides: Partial<ViewerProfile> = {}): ViewerProfi
     status: 'active',
     statusLabel: '已启用',
     isAdmin: false,
-    certification: 'enterprise',
+    nickname: 'Luna',
+    certifications: ['realname', 'enterprise'],
     roles: [{ key: 'enterprise', label: '企业', tone: 'accent' }],
     permissionGroups: [],
     permissionCount: 0,

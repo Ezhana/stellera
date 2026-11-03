@@ -71,7 +71,7 @@ describe('orders mapper DTO → page model', () => {
         code: 'FDE-42',
         status: 'in_progress',
         escrow_status: 'held',
-        engineer: { id: '9', display_name: '工程师阿远', certification: 'engineer' },
+        engineer: { id: '9', display_name: '工程师阿远', certifications: ['realname', 'engineer'] },
         work_log_count: 3,
         claimed_at: '2026-11-01T08:00:00.000Z',
       }),
@@ -94,10 +94,10 @@ describe('orders mapper DTO → page model', () => {
       escrowTone: 'accent',
       publisherId: '7',
       publisherName: 'Luna',
-      publisherCertification: 'enterprise',
+      publisherCertifications: ['realname', 'enterprise'],
       engineerId: '9',
       engineerName: '工程师阿远',
-      engineerCertification: 'engineer',
+      engineerCertifications: ['realname', 'engineer'],
       workLogCount: 3,
       createdAt: '2026-11-01T06:20:00.000Z',
       claimedAtLabel: expect.any(String),
@@ -115,10 +115,17 @@ describe('orders mapper DTO → page model', () => {
     expect(view.escrowTone).toBe('default')
   })
 
-  it('maps detail logs', () => {
+  it('maps detail logs and the full application history', () => {
     const detail = toOrderDetailView(buildOrderDetailDto())
 
     expect(detail.logs).toHaveLength(1)
+    expect(detail.applications).toHaveLength(1)
+    expect(detail.applications[0]).toMatchObject({
+      id: '1',
+      type: 'accept',
+      status: 'pending',
+      applicantName: '会员（演示）',
+    })
     expect(detail.logs[0]).toMatchObject({
       id: '11',
       authorName: '工程师阿远',
@@ -138,13 +145,13 @@ describe('orders mapper DTO → page model', () => {
   it('degrades unknown certifications to null', () => {
     const view = toOrderView(
       buildOrderDto({
-        publisher: { id: 7, display_name: 'Luna', certification: 'vip' },
-        engineer: { id: 9, display_name: '工程师阿远', certification: null },
+        publisher: { id: 7, display_name: 'Luna', certifications: ['vip', 'realname'] },
+        engineer: { id: 9, display_name: '工程师阿远', certifications: [] },
       }),
     )
 
-    expect(view.publisherCertification).toBeNull()
-    expect(view.engineerCertification).toBeNull()
+    expect(view.publisherCertifications).toEqual(['realname'])
+    expect(view.engineerCertifications).toEqual([])
     expect(view.engineerName).toBe('工程师阿远')
   })
 })
@@ -157,8 +164,8 @@ describe('orders mapper applications', () => {
         status: 'approved',
         message: '有医疗行业交付经验',
         review_note: '欢迎加入',
-        applicant: { id: 6, display_name: '会员（演示）', certification: null },
-        reviewer: { id: 7, display_name: 'Luna', certification: 'enterprise' },
+        applicant: { id: 6, display_name: '会员（演示）', certifications: [] },
+        reviewer: { id: 7, display_name: 'Luna', certifications: ['realname', 'enterprise'] },
         reviewed_at: '2026-11-01T08:00:00.000Z',
       }),
     )
@@ -174,8 +181,11 @@ describe('orders mapper applications', () => {
       message: '有医疗行业交付经验',
       reviewNote: '欢迎加入',
       applicantName: '会员（演示）',
-      applicantCertification: null,
+      applicantId: '6',
+      applicantCertifications: [],
       reviewerName: 'Luna',
+      reviewerId: '7',
+      reviewerCertifications: ['realname', 'enterprise'],
       reviewedAtLabel: expect.any(String),
       createdAtLabel: expect.any(String),
     })

@@ -9,8 +9,16 @@ export const permissionDtoSchema = z.object({
 export const userDtoSchema = z.object({
   id: z.union([z.string(), z.number()]),
   username: z.string().min(1),
+  nickname: z
+    .string()
+    .nullish()
+    .transform((value) => value ?? null),
   email: z.string().nullable().optional(),
   full_name: z.string().nullable().optional(),
+  certifications: z
+    .array(z.string())
+    .nullish()
+    .transform((value) => value ?? []),
   is_active: z.boolean().optional(),
   roles: z
     .array(z.string())

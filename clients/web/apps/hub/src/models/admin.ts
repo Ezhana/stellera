@@ -1,14 +1,16 @@
 import type { BadgeTone, Certification, RoleView } from './identity'
+import type { CertificationApplicationView } from './profile'
 
 /** A user row in the admin console. */
 export interface AdminUserView {
   id: string
   username: string
+  nickname: string
   displayName: string
   fullName: string | null
   initials: string
   email: string | null
-  certification: Certification
+  certifications: Certification[]
   isActive: boolean
   statusLabel: string
   roleKeys: string[]
@@ -30,6 +32,30 @@ export interface AdminRoleOption {
   key: string
   label: string
   tone: BadgeTone
+}
+
+/** Applicant summary attached to an admin certification-review row. */
+export interface AdminCertificationApplicantView {
+  id: string
+  username: string
+  nickname: string
+  displayName: string
+  initials: string
+  email: string | null
+  roles: RoleView[]
+  certifications: Certification[]
+}
+
+/** Certification application plus its applicant, as rendered by the review console. */
+export interface AdminCertificationApplicationView extends CertificationApplicationView {
+  applicant: AdminCertificationApplicantView | null
+}
+
+export interface AdminCertificationApplicationListModel {
+  applications: AdminCertificationApplicationView[]
+  total: number
+  page: number
+  pageSize: number
 }
 
 export type AdminRedeemCodeStatus = 'active' | 'used' | 'disabled'

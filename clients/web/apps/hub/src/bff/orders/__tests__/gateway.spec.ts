@@ -106,6 +106,8 @@ describe('HttpOrderGateway', () => {
 
     expect(mockedRequest).toHaveBeenCalledWith('/fde/orders/42', { token: 'token-1' })
     expect(result.logs).toHaveLength(1)
+    expect(result.applications).toHaveLength(1)
+    expect(result.applications[0]?.type).toBe('accept')
   })
 
   it('creates an order with the snake_case body', async () => {

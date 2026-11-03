@@ -65,10 +65,10 @@ export interface FdeOrderView {
   escrowTone: BadgeTone
   publisherId: string
   publisherName: string
-  publisherCertification: Certification
+  publisherCertifications: Certification[]
   engineerId: string | null
   engineerName: string | null
-  engineerCertification: Certification
+  engineerCertifications: Certification[]
   workLogCount: number
   createdAt: string
   publishedAtLabel: string
@@ -77,9 +77,10 @@ export interface FdeOrderView {
   completedAtLabel: string | null
 }
 
-/** Order detail page model (order + its delivery logs). */
+/** Order detail page model (order + its delivery logs + every application on it). */
 export interface FdeOrderDetailView extends FdeOrderView {
   logs: WorkLogView[]
+  applications: OrderApplicationView[]
 }
 
 /** Client-side filter state shared by the hall and the published-orders page. */
@@ -155,9 +156,12 @@ export interface OrderApplicationView {
   statusTone: BadgeTone
   message: string | null
   reviewNote: string | null
+  applicantId: string
   applicantName: string
-  applicantCertification: Certification
+  applicantCertifications: Certification[]
+  reviewerId: string | null
   reviewerName: string | null
+  reviewerCertifications: Certification[]
   reviewedAtLabel: string | null
   createdAtLabel: string
 }

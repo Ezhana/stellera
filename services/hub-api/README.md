@@ -1,9 +1,10 @@
 # Stellera Hub API（hub-api）
 
 Stellera Hub 的后端服务：**FastAPI + PostgreSQL + Authlib JWT + pycasbin RBAC**。
-提供公开注册、RBAC、FDE 订单/实时推送、钱包（余额、流水、兑换码）与超级管理员后台
-（用户、兑换码、系统设置）；在线充值暂不开放。角色与订单申请流程见
+提供公开注册、RBAC、FDE 订单/实时推送、钱包、个人信息与三类认证（实名/企业/工程师）审核、
+超级管理员后台（用户、认证审核、兑换码、系统设置）；在线充值暂不开放。角色与订单申请流程见
 [`docs/adr/0005-roles-order-applications.md`](../../docs/adr/0005-roles-order-applications.md)，
+个人信息与认证见 [`docs/adr/0006-profile-certification.md`](../../docs/adr/0006-profile-certification.md)，
 钱包与管理后台见 [`docs/adr/0004-wallet-admin.md`](../../docs/adr/0004-wallet-admin.md)。
 
 对应架构决策见 [`docs/adr/0001-auth-rbac.md`](../../docs/adr/0001-auth-rbac.md)：
@@ -31,20 +32,22 @@ services/hub-api/
 │   ├── db.py                   # async engine / session factory
 │   ├── core/config.py          # Settings（环境变量唯一入口）
 │   ├── models/                 # users / roles / permissions / refresh_tokens / fde_orders / fde_order_logs /
-│   │                           # fde_order_applications / wallets / wallet_transactions / redeem_codes / system_settings
-│   ├── schemas/                # 请求/响应模型（auth.py、fde.py、wallet.py、admin.py）
+│   │                           # fde_order_applications / wallets / wallet_transactions / redeem_codes /
+│   │                           # system_settings / certification_applications
+│   ├── schemas/                # 请求/响应模型（auth.py、fde.py、wallet.py、admin.py、profile.py）
 │   ├── security/               # TokenService（Authlib JWT）+ 密码哈希
 │   ├── rbac/                   # Casbin 模型投影、公开策略
 │   ├── realtime/hub.py         # FDE 订单 WebSocket 连接中心（app.state.realtime_hub）
 │   ├── middleware/             # JWTAuthBackend + CasbinRBACMiddleware
 │   ├── services/               # auth.py（登录/注册/刷新）、fde.py（订单状态机 + 申请审批 + 钱包结算）、
-│   │                           # wallet.py、admin.py、system_settings.py、certification.py
-│   ├── api/v1/endpoints/       # auth.py、fde.py（含 WebSocket）、wallet.py、admin.py、health.py
+│   │                           # wallet.py、profile.py（资料/公开主页/合作记录）、certification.py、
+│   │                           # admin.py、system_settings.py
+│   ├── api/v1/endpoints/       # auth.py、fde.py（含 WebSocket）、wallet.py、profile.py、admin.py、health.py
 │   ├── scripts/init.py         # 初始化 job：Alembic 迁移 + 种子（--demo 含演示数据）
 │   ├── scripts/seed.py         # TOML fixture 加载 + 幂等写入 + 旧角色/演示账号退役
-│   └── scripts/seed_data/      # rbac.toml（角色/权限）、demo.toml（演示账号/订单/钱包/兑换码）
+│   └── scripts/seed_data/      # rbac.toml（角色/权限）、demo.toml（演示账号/订单/钱包/兑换码/认证）
 ├── casbin/model.conf           # 只放模型，policy 不落 CSV
-├── migrations/                 # Alembic（0001 初始 + 0002 FDE + 0003 钱包/管理 + 0004 订单申请）
+├── migrations/                 # Alembic（0001 初始 + 0002 FDE + 0003 钱包/管理 + 0004 订单申请 + 0005 资料/认证）
 ├── compose.yml                 # 服务级编排：api + migrate job（可被上层 compose include）
 ├── tests/                      # SQLite + TestClient，不依赖 Docker/PG
 ├── alembic.ini
@@ -78,9 +81,11 @@ docker compose --profile local-db up -d local-db
 带 `--demo` 时会额外创建 `member / member12345`（会员（演示））、
 `enterprise / enterprise12345`（企业（演示））与 `engineer / engineer12345`（工程师（演示）），
 写入 10 条 FDE 演示订单（`FDE-DEMO-0001` … `FDE-DEMO-0010`）、4 个用户钱包与 16 条演示流水
-（3 条线下充值 + 10 条订单托管 + 2 条结算 + 1 条兑换），以及 3 个演示兑换码
-（`RDM-DEMO-2026-0001` 可用 / `-0002` 已使用 / `-0003` 已停用）。
-任何访客都可以通过 `POST /api/v1/auth/register` 注册为会员。
+（3 条线下充值 + 10 条订单托管 + 2 条结算 + 1 条兑换）、3 个演示兑换码
+（`RDM-DEMO-2026-0001` 可用 / `-0002` 已使用 / `-0003` 已停用）与 5 条演示认证申请
+（企业/工程师各含已通过的实名 + 企业/工程师认证，会员一条待审核实名）。
+任何访客都可以通过 `POST /api/v1/auth/register`（仅用户名/邮箱/密码）注册为会员，
+昵称由系统自动生成，之后可在个人信息中修改。
 
 ## 配置
 
@@ -107,7 +112,7 @@ docker compose --profile local-db up -d local-db
 | 方法 | 路径 | 认证 | 说明 |
 | --- | --- | --- | --- |
 | POST | `/api/v1/auth/login` | 公开 | JSON `{username, password}`，返回令牌 + `user` |
-| POST | `/api/v1/auth/register` | 公开 | JSON `{username, email, full_name, password}`，注册即 member，201，返回令牌 + `user` |
+| POST | `/api/v1/auth/register` | 公开 | JSON `{username, email, password}`，注册即 member，201，返回令牌 + `user`（昵称自动生成） |
 | POST | `/api/v1/auth/token` | 公开 | OAuth2 password form（Swagger Authorize），返回纯令牌 |
 | POST | `/api/v1/auth/refresh` | 公开（凭 refresh token） | 旋转 refresh token |
 | POST | `/api/v1/auth/logout` | Bearer | 吊销该用户全部 refresh token，204 |
@@ -115,7 +120,7 @@ docker compose --profile local-db up -d local-db
 | GET | `/api/v1/fde/orders` | Bearer | FDE 订单大厅，支持 `status` / `industry` / `q` / `page` / `page_size` |
 | GET | `/api/v1/fde/orders/mine` | Bearer | 我发布的 FDE 订单，可选 `status` |
 | GET | `/api/v1/fde/orders/assigned` | Bearer | 我接到的 FDE 订单，可选 `status` / 分页 |
-| GET | `/api/v1/fde/orders/{order_id}` | Bearer | FDE 订单详情（含 `logs`，最旧在前） |
+| GET | `/api/v1/fde/orders/{order_id}` | Bearer | FDE 订单详情（含 `logs` 与全部 `applications` 审批历史） |
 | POST | `/api/v1/fde/orders` | Bearer | 任何登录用户发布需求，201，返回订单（余额不足 409） |
 | POST | `/api/v1/fde/orders/{order_id}/applications` | Bearer | 申请接单 / 申请交付，`{type, message?}`，201 |
 | POST | `/api/v1/fde/orders/{order_id}/logs` | Bearer（接单工程师/admin） | 提交工作日志，201 |
@@ -129,10 +134,18 @@ docker compose --profile local-db up -d local-db
 | GET | `/api/v1/wallet` | Bearer | 我的钱包汇总（余额、用量/兑换/充值/结算合计、充值说明与客服） |
 | GET | `/api/v1/wallet/transactions` | Bearer | 我的钱包流水，支持 `type` / `page` / `page_size` |
 | POST | `/api/v1/wallet/redeem` | Bearer | 兑换码入账，`{code}`；码不存在 404，已用/停用/过期 409 |
-| GET | `/api/v1/admin/users` | Bearer（admin） | 用户列表，支持 `q` / `role` / `page` / `page_size`，含认证与钱包余额 |
-| GET | `/api/v1/admin/roles` | Bearer（admin） | 角色目录（不含 `authenticated` 基线） |
-| PATCH | `/api/v1/admin/users/{user_id}` | Bearer（admin） | 编辑姓名/邮箱/启用状态/认证，保护规则见下 |
+| GET | `/api/v1/profile` | Bearer | 本人资料（昵称/邮箱/实名/介绍/技能/城市/联系方式 + 认证 + 合作记录） |
+| PATCH | `/api/v1/profile` | Bearer | 修改资料：昵称/邮箱/介绍/技能/城市/联系方式；邮箱唯一 |
+| GET | `/api/v1/profiles/{user_id}` | Bearer | 他人公开主页：昵称/介绍/技能/城市/认证/合作记录（隐藏实名与联系方式） |
+| GET | `/api/v1/profile/certification-applications` | Bearer | 我的认证申请（最新在前） |
+| POST | `/api/v1/profile/certification-applications` | Bearer | 提交实名/企业/工程师认证申请，201，pending |
+| GET | `/api/v1/admin/users` | Bearer（admin） | 用户列表，支持 `q` / `role` / `page` / `page_size`，含昵称/实名/认证/余额 |
+| GET | `/api/v1/admin/roles` | Bearer（admin） | 角色目录（不含 `authenticated` 基线，含 realname） |
+| PATCH | `/api/v1/admin/users/{user_id}` | Bearer（admin） | 编辑昵称/邮箱/启用状态；认证走认证审核页 |
 | POST | `/api/v1/admin/users/{user_id}/wallet-adjustments` | Bearer（admin） | 通过 adjustment 流水增减余额 |
+| GET | `/api/v1/admin/certification-applications` | Bearer（admin） | 认证申请列表，支持 `status` / `type` / `q` / 分页 |
+| POST | `/api/v1/admin/certification-applications/{id}/approve` | Bearer（admin） | 通过认证申请，授予角色并刷新权限 |
+| POST | `/api/v1/admin/certification-applications/{id}/reject` | Bearer（admin） | 驳回认证申请，可填理由 |
 | GET | `/api/v1/admin/redeem-codes` | Bearer（admin） | 兑换码列表，支持 `status` / `q` / 分页 |
 | POST | `/api/v1/admin/redeem-codes` | Bearer（admin） | 批量生成兑换码，201，返回批次号与全部新码 |
 | PATCH | `/api/v1/admin/redeem-codes/{code_id}` | Bearer（admin） | 启用/停用兑换码；已使用不可改 |
@@ -153,10 +166,12 @@ docker compose --profile local-db up -d local-db
   "user": {
     "id": 1,
     "username": "admin",
+    "nickname": "管理员",
     "email": "admin@example.com",
     "full_name": "系统管理员",
     "is_active": true,
     "roles": ["admin"],
+    "certifications": [],
     "permissions": [
       { "object": "/api/v1/*", "action": "^(GET|POST|PUT|PATCH|DELETE)$" },
       { "object": "/api/v1/auth/me", "action": "^GET$" }
@@ -166,8 +181,9 @@ docker compose --profile local-db up -d local-db
 ```
 
 `permissions` 来自 Casbin 的 `get_implicit_permissions_for_user`（含角色继承），
-按 `(object, action)` 去重排序，供前端权限卡片展示。令牌类响应统一带
-`Cache-Control: no-store`。
+按 `(object, action)` 去重排序，供前端权限卡片展示。`nickname` 为昵称（可改），
+`full_name` 为实名（仅实名认证通过后写入），`certifications` 由角色派生，顺序固定为
+realname、enterprise、engineer。令牌类响应统一带 `Cache-Control: no-store`。
 
 ### 令牌与刷新旋转
 
@@ -191,8 +207,10 @@ escrow: held --交付通过--> released / --取消--> refunded
 
 - 订单 JSON 字段：`id/code/title/industry/description/delivery_days/price_cents/status/
   escrow_status/publisher/engineer/work_log_count/created_at/updated_at/claimed_at/completed_at`；
-  `publisher` / `engineer` 为 `{id, display_name, certification}`，`display_name` 取 `full_name`，
-  为空时回退 `username`；`certification` 为 `enterprise` / `engineer` / `null`；
+  `publisher` / `engineer` 为 `{id, display_name, certifications}`，`display_name` 取昵称
+  （回退实名/用户名）；`certifications` 为 `["realname", "enterprise"]` 这样的列表；
+- 订单详情 `GET /orders/{id}` 额外返回 `logs` 与 `applications`（该订单全部申请，created_at asc，
+  含申请人/审批人/审批时间/理由，即历史审批记录）；
 - 列表响应统一信封 `{items, total, page, page_size}`，按 `created_at desc, id desc` 排序；
   `status` 只接受 `open/in_progress/completed/cancelled`，`page_size` 范围 1..100；
   `/orders/mine` 为我发布的，`/orders/assigned` 为我接到的（engineer_id=当前用户）；
@@ -232,13 +250,72 @@ escrow: held --交付通过--> released / --取消--> refunded
     "price_cents": 8600000,
     "status": "in_progress",
     "escrow_status": "held",
-    "publisher": { "id": 4, "display_name": "企业（演示）", "certification": "enterprise" },
-    "engineer": { "id": 5, "display_name": "工程师（演示）", "certification": "engineer" },
+    "publisher": { "id": 4, "display_name": "企业（演示）", "certifications": ["realname", "enterprise"] },
+    "engineer": { "id": 5, "display_name": "工程师（演示）", "certifications": ["realname", "engineer"] },
     "work_log_count": 1,
     "created_at": "2026-11-01T06:20:00Z",
     "updated_at": "2026-11-01T07:10:00Z",
     "claimed_at": "2026-11-01T07:00:00Z",
     "completed_at": null
+  }
+}
+```
+
+## 个人信息与认证
+
+- `users` 新增昵称/介绍/技能/城市/联系电话/微信；`full_name` 只作为实名，个人资料不可编辑；
+- 注册只收 username/email/password，自动生成昵称 `用户{id}`，之后可通过 `PATCH /profile` 修改；
+  展示名统一为 `nickname → full_name → username`；
+- `GET /profile` 返回本人完整资料、认证列表与合作记录；`PATCH /profile` 可改昵称/邮箱/介绍/技能/
+  城市/联系电话/微信（邮箱唯一，空串清空可空字段）；`GET /profiles/{id}` 是登录后可看的公开主页，
+  隐藏 username/email/实名/联系方式/roles；
+- 合作记录以已完成订单为准（我发布 + 我接单）：统计完成单数、合作方数（去重对方）与累计金额，
+  明细取最近 20 条，含对方昵称/认证、订单、金额、完成时间与角色；
+- 三类认证（表 `certification_applications`）：
+  ```text
+  realname（实名）：真实姓名 / 身份证号 / 手机号 / 备注
+  enterprise（企业）：公司名 / 统一社会信用代码 / 联系人 / 联系电话 / 资质说明
+  engineer（工程师）：技能 / 工作年限 / 项目经历 / 联系电话
+  ```
+  实名可单独拥有；企业/工程师必须已有实名，且二者互斥（新认证通过时替换旧认证）；
+- 用户通过 `POST /profile/certification-applications` 提交 pending 申请，同类型 pending/approved
+  时不可重复提交；被驳回后可重新提交；
+- 管理员在 `/api/v1/admin/certification-applications` 列表查看（status/type/q/分页）并通过/驳回：
+  - 实名通过：写入 `users.full_name` 并授予 realname 角色；
+  - 企业/工程师通过：校验实名，替换企业/工程师角色并确保 member/realname 保留；
+  - 通过后 `resync_user` 立即刷新 Casbin；同用户其它 pending 企业/工程师申请自动驳回；
+- 管理员用户编辑只保留昵称/邮箱/启用状态与余额调整，认证统一走审核页。
+
+```json
+{
+  "id": 2,
+  "username": "member",
+  "nickname": "会员（演示）",
+  "email": "member@example.com",
+  "real_name": "王芳",
+  "bio": "专注数据标注与交付",
+  "skills": "Python,数据标注",
+  "city": "上海",
+  "contact_phone": "13800000000",
+  "contact_wechat": "member-wx",
+  "roles": ["member", "realname"],
+  "certifications": ["realname"],
+  "created_at": "2026-11-04T00:00:00Z",
+  "cooperation": {
+    "completed_count": 1,
+    "partner_count": 1,
+    "total_amount_cents": 123456,
+    "records": [
+      {
+        "order_id": 7,
+        "code": "FDE-2026-0007",
+        "title": "政务热线工单智能分派",
+        "price_cents": 123456,
+        "completed_at": "2026-11-03T00:00:00Z",
+        "role": "engineer",
+        "counterpart": { "id": 4, "display_name": "企业（演示）", "certifications": ["realname", "enterprise"] }
+      }
+    ]
   }
 }
 ```
@@ -273,10 +350,11 @@ escrow: held --交付通过--> released / --取消--> refunded
 
 ### 管理后台（仅 admin）
 
-- 用户：列表支持用户名/邮箱/姓名搜索与角色过滤，返回认证状态与钱包余额；PATCH 可编辑姓名、邮箱、
-  启用状态与认证（`none` / `enterprise` / `engineer`，认证即替换 enterprise/engineer 角色并保留 admin、
-  确保 member）；保护规则：不能停用自己、不能移除最后一个 admin；停用会立即吊销该用户全部 refresh token；
-  认证或角色变更后调用 `resync_user` 立即刷新 Casbin 投影；
+- 用户：列表支持用户名/昵称/邮箱搜索与角色过滤，返回昵称、实名、认证与钱包余额；PATCH 可编辑
+  昵称/邮箱/启用状态（认证统一走认证审核页）；保护规则：不能停用自己、不能移除最后一个 admin；
+  停用会立即吊销该用户全部 refresh token；
+- 认证审核：列表支持状态/类型/关键字过滤与分页；通过实名写入 full_name 并授予 realname 角色，
+  通过企业/工程师校验实名后替换认证角色，驳回可填理由；改动后 `resync_user` 立即刷新 Casbin；
 - 余额调整：`POST /admin/users/{id}/wallet-adjustments` 通过 `adjustment` 流水增加/扣减余额，
   扣减不能超过当前余额（409）；不允许直接修改 `balance_cents`；
 - 兑换码：列表支持状态/关键字过滤；批量生成参数为面额（100..100,000,000 分）、数量（1..100）、
@@ -305,17 +383,19 @@ escrow: held --交付通过--> released / --取消--> refunded
 角色树与种子权限：
 
 ```text
-authenticated            所有登录用户基线：auth/me、auth/logout、wallet*、
+authenticated            所有登录用户基线：auth/me、auth/logout、wallet*、profile*、
                          fde 订单读取/发布/取消/日志 + 申请创建/查询/审批/驳回/撤回
 ├── member               注册即会员（继承 authenticated；认证后仍保留）
-│   ├── enterprise       企业认证（仅身份标识，不额外授予业务权限）
-│   ├── engineer         工程师认证（仅身份标识，不额外授予业务权限）
+│   ├── realname         实名认证（仅身份标识，不额外授予业务权限）
+│   ├── enterprise       企业认证（仅身份标识；与 realname 叠加）
+│   ├── engineer         工程师认证（仅身份标识；与 realname 叠加）
 │   └── admin            /api/v1/* 全方法（含 /api/v1/admin/* 与管理端全部操作）
 ```
 
 权限统一按端点收窄，业务边界（发布者 / 接单工程师 / 申请人 / 审批人）由服务层判断，
-不靠角色区分；新增模块时在 `app/scripts/seed_data/rbac.toml` 里补对应的 `[[permissions]]` 再执行 seed。
-当前种子共 17 条权限（authenticated 16 条 + admin 通配 1 条）；`viewer` / `operator` 已移除，
+不靠角色区分；认证状态由角色派生：realname、enterprise、engineer（企业/工程师互斥，实名可叠加）。
+新增模块时在 `app/scripts/seed_data/rbac.toml` 里补对应的 `[[permissions]]` 再执行 seed。
+当前种子共 22 条权限（authenticated 21 条 + admin 通配 1 条）；`viewer` / `operator` 已移除，
 存量用户由 seed 迁移为 `member`。
 
 中间件顺序（外 → 内）：`CORS` → `AuthenticationMiddleware` → `CasbinRBACMiddleware`。
@@ -340,7 +420,9 @@ FK 指向 `users`，单号唯一，`status` / `publisher_id` / `created_at` 建�
 钱包与管理后台在 `migrations/versions/0003_wallet_admin.py`（`wallets` / `wallet_transactions` /
 `redeem_codes` / `system_settings`，钱包用户唯一，兑换码唯一并有状态/批次索引）；
 订单申请在 `migrations/versions/0004_fde_applications.py`（`fde_order_applications`，
-FK 指向订单/用户，`order_id` / `applicant_id` / `type` / `status` 建索引）。
+FK 指向订单/用户，`order_id` / `applicant_id` / `type` / `status` 建索引）；
+个人资料与认证在 `migrations/versions/0005_profile_certification.py`（users 增加 nickname/bio/skills/
+city/contact_phone/contact_wechat，以及 `certification_applications` 表，FK 指向用户）。
 生产数据库是 PostgreSQL；测试用临时 SQLite（`sqlite+aiosqlite`），不依赖 Docker/PG。
 
 ## 质量检查
@@ -356,10 +438,11 @@ uv run pytest
 测试覆盖：密码哈希、JWT 签发/过期/篡改/类型混用、登录/刷新旋转/重放吊销/登出、公开注册与唯一性、
 401 与 403 区分、角色继承矩阵、路径归一化、OPTIONS 放行、健康检查、种子幂等与旧角色迁移，
 FDE 订单全流程（大厅过滤/分页、发布、接单/交付申请、审批/驳回/撤回、自动驳回、我发布的/我接到的、
-工作日志、取消退款、管理员跨角色审批、WebSocket 鉴权与 `order.created` / `order.updated` 推送），
-钱包（汇总、流水过滤/分页、兑换成功/重复/停用/过期、发布扣款/取消退款/交付结算/余额不足、
-管理员 adjustment 调整），管理后台（用户搜索/分页/编辑/认证/余额调整与保护规则、兑换码生成/
-过滤/启停、系统设置三键与权限拒绝）。
+工作日志、取消退款、管理员跨角色审批、订单详情含全部申请审批记录、WebSocket 推送），
+钱包（汇总、流水过滤/分页、兑换、扣款/退款/结算/余额不足、管理员 adjustment），
+个人信息（资料读取/修改、邮箱唯一、公开主页隐藏敏感字段、合作记录与统计），
+认证（三类申请校验、实名前置、通过授予/替换角色、驳回重提、认证审核列表与权限），
+管理后台（用户搜索/分页/编辑/余额调整与保护规则、认证审核、兑换码、系统设置）。
 
 ## Docker
 

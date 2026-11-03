@@ -47,7 +47,7 @@ const acceptApplication = buildApplicationView({
   status: 'pending',
   order,
   applicantName: '会员（演示）',
-  applicantCertification: null,
+  applicantCertifications: [],
   message: '有医疗行业交付经验',
 })
 
@@ -57,7 +57,7 @@ const deliveryApplication = buildApplicationView({
   status: 'pending',
   order: { ...order, status: 'in_progress', statusLabel: '交付中', statusTone: 'info' },
   applicantName: '工程师阿远',
-  applicantCertification: 'engineer',
+  applicantCertifications: ['realname', 'engineer'],
   message: '已按验收标准完成交付。',
 })
 
@@ -80,6 +80,9 @@ async function mountPage(
     history: createMemoryHistory(),
     routes: [
       { path: '/login', name: 'login', component: EmptyView },
+      { path: '/profile', name: 'profile', component: EmptyView },
+      { path: '/profiles/:id', name: 'public-profile', component: EmptyView },
+      { path: '/fde/orders/:id', name: 'fde-order-detail', component: EmptyView },
       { path: '/intro', name: 'intro', component: EmptyView },
       { path: '/fde/hall', name: 'fde-hall', component: EmptyView },
       { path: '/fde/published', name: 'fde-published', component: EmptyView },
@@ -213,6 +216,30 @@ describe('ApplicationsPage', () => {
     expect(findButton(wrapper, '确认交付')).toBeDefined()
     expect(wrapper.text()).toContain('工程师认证')
     expect(wrapper.text()).toContain('已按验收标准完成交付。')
+  })
+
+  it('shows the reviewer, review time and rejection note for reviewed applications', async () => {
+    vi.mocked(ordersBff.listReceivedApplications).mockResolvedValue(
+      buildApplicationListModel([
+        buildApplicationView({
+          ...acceptApplication,
+          status: 'rejected',
+          statusLabel: '已驳回',
+          statusTone: 'error',
+          reviewerName: 'Luna',
+          reviewerCertifications: ['realname', 'enterprise'],
+          reviewedAtLabel: '11-03 10:00',
+          reviewNote: '暂不符合岗位要求',
+        }),
+      ]),
+    )
+    const { wrapper } = await mountPage('/fde/applications?tab=received')
+
+    expect(wrapper.text()).toContain('审批人')
+    expect(wrapper.text()).toContain('Luna')
+    expect(wrapper.text()).toContain('企业认证')
+    expect(wrapper.text()).toContain('11-03 10:00')
+    expect(wrapper.text()).toContain('驳回理由：暂不符合岗位要求')
   })
 
   it('reloads with the selected type and status filters', async () => {

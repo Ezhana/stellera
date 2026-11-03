@@ -20,15 +20,15 @@ const registerSchema = z
     username: z
       .string()
       .trim()
+      .toLowerCase()
       .min(3, '用户名至少 3 个字符')
       .max(64, '用户名长度不能超过 64 个字符')
-      .regex(/^[A-Za-z0-9_.-]+$/, '用户名只能包含字母、数字、下划线、点或短横线'),
-    fullName: z.string().trim().min(1, '请输入姓名').max(128, '姓名长度不能超过 128 个字符'),
+      .regex(/^[a-z0-9_.-]+$/, '用户名只能包含小写字母、数字、下划线、点或短横线'),
     email: z
       .string()
       .trim()
       .min(1, '请输入邮箱')
-      .max(128, '邮箱长度不能超过 128 个字符')
+      .max(320, '邮箱长度不能超过 320 个字符')
       .email('请输入有效的邮箱地址'),
     password: z.string().min(8, '密码至少 8 个字符').max(128, '密码长度不能超过 128 个字符'),
     confirmPassword: z.string().min(1, '请再次输入密码'),
@@ -38,17 +38,10 @@ const registerSchema = z
     path: ['confirmPassword'],
   })
 
-type RegisterField = 'username' | 'fullName' | 'email' | 'password' | 'confirmPassword'
-const FIELDS: readonly RegisterField[] = [
-  'username',
-  'fullName',
-  'email',
-  'password',
-  'confirmPassword',
-]
+type RegisterField = 'username' | 'email' | 'password' | 'confirmPassword'
+const FIELDS: readonly RegisterField[] = ['username', 'email', 'password', 'confirmPassword']
 
 const username = ref('')
-const fullName = ref('')
 const email = ref('')
 const password = ref('')
 const confirmPassword = ref('')
@@ -65,7 +58,6 @@ function validate(): boolean {
   clearFieldErrors()
   const result = registerSchema.safeParse({
     username: username.value.trim(),
-    fullName: fullName.value.trim(),
     email: email.value.trim(),
     password: password.value,
     confirmPassword: confirmPassword.value,
@@ -111,9 +103,8 @@ async function handleSubmit(): Promise<void> {
   try {
     await auth.register(
       {
-        username: username.value.trim(),
+        username: username.value.trim().toLowerCase(),
         email: email.value.trim(),
-        fullName: fullName.value.trim(),
         password: password.value,
       },
       false,
@@ -153,22 +144,13 @@ async function handleSubmit(): Promise<void> {
           label="用户名"
           name="username"
           autocomplete="username"
-          placeholder="3–64 位字母、数字、_ . -"
+          placeholder="3–64 位小写字母、数字、_ . -"
           :maxlength="64"
           :error="fieldErrors.username"
           :disabled="submitting"
         />
 
-        <UiInput
-          v-model="fullName"
-          label="姓名"
-          name="fullName"
-          autocomplete="name"
-          placeholder="用于订单与申请展示"
-          :maxlength="128"
-          :error="fieldErrors.fullName"
-          :disabled="submitting"
-        />
+        <p class="register-card__hint">昵称将自动生成，可在个人信息中修改。</p>
 
         <UiInput
           v-model="email"
@@ -177,7 +159,7 @@ async function handleSubmit(): Promise<void> {
           type="email"
           autocomplete="email"
           placeholder="you@example.com"
-          :maxlength="128"
+          :maxlength="320"
           :error="fieldErrors.email"
           :disabled="submitting"
         />
@@ -260,6 +242,13 @@ async function handleSubmit(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: var(--primitive-space-4);
+}
+
+.register-card__hint {
+  margin-top: calc(-1 * var(--primitive-space-2));
+  color: var(--color-fg-muted);
+  font-size: var(--font-size-caption);
+  line-height: var(--font-line-height-caption);
 }
 
 .register-card__password-toggle {

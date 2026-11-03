@@ -26,15 +26,14 @@ from fastapi import (
 )
 
 from app.api.deps import CurrentUserDep, SessionDep
+from app.api.v1.summaries import user_ref
 from app.models.base import ensure_utc
 from app.models.fde import FdeOrderLog
-from app.models.user import User
 from app.realtime.hub import RealtimeHub
 from app.schemas.fde import (
     ApplicationReviewRequest,
     ApplicationStatus,
     ApplicationType,
-    Certification,
     EscrowStatus,
     OrderApplicationCreateRequest,
     OrderApplicationListResponse,
@@ -44,13 +43,11 @@ from app.schemas.fde import (
     OrderListResponse,
     OrderResponse,
     OrderStatus,
-    OrderUserRef,
     WorkLogCreateRequest,
     WorkLogResponse,
 )
 from app.security.tokens import TokenError
 from app.services import fde as fde_service
-from app.services.certification import certification_from_roles
 from app.services.fde import (
     ApplicationRecord,
     FdeError,
@@ -69,18 +66,6 @@ WS_CLOSE_UNAUTHORIZED = 4401
 WS_CLOSE_UNAVAILABLE = 1013
 
 
-def _user_ref(user: User) -> OrderUserRef:
-    """用户摘要：认证状态完全由角色派生（admin 不影响认证）。"""
-    return OrderUserRef(
-        id=user.id,
-        display_name=user.full_name or user.username,
-        certification=cast(
-            Certification | None,
-            certification_from_roles(role.name for role in user.roles),
-        ),
-    )
-
-
 def _order_response(aggregate: OrderAggregate) -> OrderResponse:
     order = aggregate.order
     return OrderResponse(
@@ -93,8 +78,8 @@ def _order_response(aggregate: OrderAggregate) -> OrderResponse:
         price_cents=order.price_cents,
         status=cast(OrderStatus, order.status),
         escrow_status=cast(EscrowStatus, order.escrow_status),
-        publisher=_user_ref(order.publisher),
-        engineer=_user_ref(order.engineer) if order.engineer is not None else None,
+        publisher=user_ref(order.publisher),
+        engineer=user_ref(order.engineer) if order.engineer is not None else None,
         work_log_count=aggregate.work_log_count,
         created_at=ensure_utc(order.created_at),
         updated_at=ensure_utc(order.updated_at),
@@ -107,7 +92,7 @@ def _log_response(log: FdeOrderLog) -> WorkLogResponse:
     return WorkLogResponse(
         id=log.id,
         order_id=log.order_id,
-        author=_user_ref(log.author),
+        author=user_ref(log.author),
         content=log.content,
         worked_hours=log.worked_hours,
         created_at=ensure_utc(log.created_at),
@@ -128,6 +113,15 @@ def _detail_response(detail: OrderDetail) -> OrderDetailResponse:
     return OrderDetailResponse(
         **_order_response(aggregate).model_dump(),
         logs=[_log_response(log) for log in detail.logs],
+        applications=[
+            _application_response(
+                ApplicationRecord(
+                    application=application,
+                    work_log_count=detail.work_log_count,
+                )
+            )
+            for application in detail.applications
+        ],
     )
 
 
@@ -142,8 +136,8 @@ def _application_response(record: ApplicationRecord) -> OrderApplicationResponse
         status=cast(ApplicationStatus, application.status),
         message=application.message,
         review_note=application.review_note,
-        applicant=_user_ref(application.applicant),
-        reviewer=_user_ref(application.reviewer) if application.reviewer is not None else None,
+        applicant=user_ref(application.applicant),
+        reviewer=user_ref(application.reviewer) if application.reviewer is not None else None,
         reviewed_at=ensure_utc(application.reviewed_at) if application.reviewed_at else None,
         created_at=ensure_utc(application.created_at),
     )

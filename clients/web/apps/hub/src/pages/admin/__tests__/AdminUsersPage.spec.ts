@@ -25,6 +25,7 @@ const EmptyView = { template: '<div />' }
 const roleOptions: AdminRoleOption[] = [
   { key: 'admin', label: '管理员', tone: 'accent' },
   { key: 'member', label: '会员', tone: 'default' },
+  { key: 'realname', label: '实名认证', tone: 'info' },
   { key: 'enterprise', label: '企业', tone: 'accent' },
   { key: 'engineer', label: '工程师', tone: 'success' },
 ]
@@ -32,14 +33,18 @@ const roleOptions: AdminRoleOption[] = [
 const enterpriseUser = buildAdminUserView({
   id: '7',
   username: 'luna',
+  nickname: 'Luna Chen',
   displayName: 'Luna Chen',
   fullName: 'Luna Chen',
   email: 'luna@example.com',
-  certification: 'enterprise',
+  certifications: ['realname', 'enterprise'],
   isActive: true,
   statusLabel: '已启用',
-  roleKeys: ['enterprise'],
-  roles: [{ key: 'enterprise', label: '企业', tone: 'accent' }],
+  roleKeys: ['realname', 'enterprise'],
+  roles: [
+    { key: 'realname', label: '实名认证', tone: 'info' },
+    { key: 'enterprise', label: '企业', tone: 'accent' },
+  ],
   balanceCents: 1_000_000,
   balanceLabel: '¥10,000',
 })
@@ -47,10 +52,11 @@ const enterpriseUser = buildAdminUserView({
 const memberUser = buildAdminUserView({
   id: '8',
   username: 'member',
+  nickname: '会员（演示）',
   displayName: '会员（演示）',
-  fullName: '会员（演示）',
+  fullName: null,
   email: null,
-  certification: null,
+  certifications: [],
   isActive: false,
   statusLabel: '已停用',
   roleKeys: ['member'],
@@ -61,7 +67,7 @@ const memberUser = buildAdminUserView({
 
 const adminViewer = buildViewer({
   isAdmin: true,
-  certification: null,
+  certifications: [],
   roles: [{ key: 'admin', label: '管理员', tone: 'accent' }],
   capabilities: {
     publishOrder: true,
@@ -86,6 +92,9 @@ async function mountPage(): Promise<{ wrapper: VueWrapper; router: Router }> {
     history: createMemoryHistory(),
     routes: [
       { path: '/login', name: 'login', component: EmptyView },
+      { path: '/profile', name: 'profile', component: EmptyView },
+      { path: '/profiles/:id', name: 'public-profile', component: EmptyView },
+      { path: '/fde/orders/:id', name: 'fde-order-detail', component: EmptyView },
       { path: '/intro', name: 'intro', component: EmptyView },
       { path: '/fde/hall', name: 'fde-hall', component: EmptyView },
       { path: '/fde/published', name: 'fde-published', component: EmptyView },
@@ -93,6 +102,7 @@ async function mountPage(): Promise<{ wrapper: VueWrapper; router: Router }> {
       { path: '/fde/applications', name: 'fde-applications', component: EmptyView },
       { path: '/wallet', name: 'wallet', component: EmptyView },
       { path: '/admin/users', name: 'admin-users', component: EmptyView },
+      { path: '/admin/certifications', name: 'admin-certifications', component: EmptyView },
       { path: '/admin/redeem-codes', name: 'admin-redeem-codes', component: EmptyView },
       { path: '/admin/settings', name: 'admin-settings', component: EmptyView },
     ],
@@ -141,6 +151,7 @@ describe('AdminUsersPage', () => {
     expect(wrapper.text()).toContain('Luna Chen')
     expect(wrapper.text()).toContain('@luna')
     expect(wrapper.text()).toContain('luna@example.com')
+    expect(wrapper.text()).toContain('实名认证')
     expect(wrapper.text()).toContain('企业认证')
     expect(wrapper.text()).toContain('未认证')
     expect(wrapper.text()).toContain('会员')
@@ -150,7 +161,8 @@ describe('AdminUsersPage', () => {
     expect(findButton(wrapper, '调整角色')).toBeUndefined()
 
     const options = wrapper.findAll('#user-role-filter option').map((node) => node.text())
-    expect(options).toEqual(['全部角色', '管理员', '会员', '企业', '工程师'])
+    expect(options).toEqual(['全部角色', '管理员', '会员', '实名认证', '企业', '工程师'])
+    expect(wrapper.find('#edit-certification').exists()).toBe(false)
   })
 
   it('reloads the first page when searching and filtering by role', async () => {
@@ -179,31 +191,31 @@ describe('AdminUsersPage', () => {
     })
   })
 
-  it('saves the profile name, email and certification from the inline editor', async () => {
+  it('saves the nickname and email from the inline editor without editing certifications', async () => {
     vi.mocked(adminBff.updateUser).mockResolvedValue({
       ...enterpriseUser,
+      nickname: 'Luna Zhang',
       displayName: 'Luna Zhang',
-      fullName: 'Luna Zhang',
       email: 'luna.zhang@example.com',
-      certification: 'engineer',
+      certifications: ['realname', 'engineer'],
     })
     const { wrapper } = await mountPage()
     await openEditor(wrapper)
 
     expect(wrapper.text()).toContain('编辑「Luna Chen」的资料')
+    expect(wrapper.find('input[name="edit-nickname"]').exists()).toBe(true)
+    expect(wrapper.find('#edit-certification').exists()).toBe(false)
 
-    await wrapper.find('input[name="edit-full-name"]').setValue(' Luna Zhang ')
+    await wrapper.find('input[name="edit-nickname"]').setValue(' Luna Zhang ')
     await wrapper.find('input[name="edit-email"]').setValue(' luna.zhang@example.com ')
-    await wrapper.find('#edit-certification').setValue('engineer')
     await findButton(wrapper, '保存资料')?.trigger('click')
     await flushPromises()
 
     expect(adminBff.updateUser).toHaveBeenCalledWith('7', {
-      fullName: 'Luna Zhang',
+      nickname: 'Luna Zhang',
       email: 'luna.zhang@example.com',
-      certification: 'engineer',
     })
-    expect(wrapper.text()).toContain('已保存 Luna Zhang 的资料与认证。')
+    expect(wrapper.text()).toContain('已保存 Luna Zhang 的资料。')
     expect(adminBff.listUsers).toHaveBeenCalledTimes(2)
   })
 
@@ -211,12 +223,12 @@ describe('AdminUsersPage', () => {
     const { wrapper } = await mountPage()
     await openEditor(wrapper)
 
-    await wrapper.find('input[name="edit-full-name"]').setValue('')
+    await wrapper.find('input[name="edit-nickname"]').setValue('')
     await wrapper.find('input[name="edit-email"]').setValue('not-an-email')
     await findButton(wrapper, '保存资料')?.trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('请输入姓名')
+    expect(wrapper.text()).toContain('请输入昵称')
     expect(wrapper.text()).toContain('请输入有效的邮箱地址')
     expect(adminBff.updateUser).not.toHaveBeenCalled()
   })

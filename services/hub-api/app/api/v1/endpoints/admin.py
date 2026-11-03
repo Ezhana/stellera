@@ -1,7 +1,7 @@
-"""管理后台端点：用户、角色目录、兑换码与系统设置。
+"""管理后台端点：用户、角色目录、认证审核、兑换码与系统设置。
 
 仅 admin 角色可用：Casbin 的 `/api/v1/*` 通配先拦一次，端点内再按数据库角色
-兜底校验（防止策略配置漂移）。角色变更后立即刷新 Casbin 投影，无需重新登录。
+兜底校验（防止策略配置漂移）。认证审核通过后立即刷新 Casbin 投影，无需重新登录。
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUserDep, SessionDep, get_enforcer_guard
+from app.api.v1.summaries import certification_application_response
 from app.middleware.authentication import UserPrincipal
 from app.models.base import ensure_utc
 from app.models.user import User
@@ -34,14 +35,30 @@ from app.schemas.admin import (
     SettingsUpdateRequest,
     WalletAdjustmentRequest,
 )
-from app.schemas.fde import Certification as AdminCertification
+from app.schemas.profile import (
+    AdminCertificationApplicationListResponse,
+    AdminCertificationApplicationResponse,
+    CertificationReviewRequest,
+    CertificationStatus,
+    CertificationType,
+    CertificationUserRef,
+)
 from app.services import admin as admin_service
+from app.services import certification as certification_service
 from app.services import system_settings as settings_service
 from app.services.admin import (
     AdminRedeemCodeItem,
     AdminUserItem,
     AdminValidationError,
     RoleOption,
+)
+from app.services.certification import (
+    CertificationApplicationItem,
+    CertificationError,
+    CertificationNotFoundError,
+    CertificationValidationError,
+    certifications_from_roles,
+    display_name,
 )
 from app.services.system_settings import SystemSetting, SystemSettingInvalidError
 
@@ -50,9 +67,11 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 def _http_error(exc: Exception) -> HTTPException:
     """把业务错误映射为 HTTP 状态码：404 / 422 / 409。"""
-    if isinstance(exc, admin_service.AdminNotFoundError):
+    if isinstance(exc, (admin_service.AdminNotFoundError, CertificationNotFoundError)):
         status_code = status.HTTP_404_NOT_FOUND
-    elif isinstance(exc, (AdminValidationError, SystemSettingInvalidError)):
+    elif isinstance(
+        exc, (AdminValidationError, SystemSettingInvalidError, CertificationValidationError)
+    ):
         status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
     else:
         status_code = status.HTTP_409_CONFLICT
@@ -70,20 +89,43 @@ def _user_response(item: AdminUserItem) -> AdminUserResponse:
     return AdminUserResponse(
         id=user.id,
         username=user.username,
-        email=user.email,
+        nickname=display_name(user),
         full_name=user.full_name,
+        email=user.email,
         is_active=user.is_active,
         roles=list(item.roles),
-        certification=cast(AdminCertification | None, item.certification),
+        certifications=list(item.certifications),
         balance_cents=item.balance_cents,
         created_at=ensure_utc(user.created_at),
+    )
+
+
+def _certification_user_ref(item: CertificationApplicationItem) -> CertificationUserRef:
+    user = item.user
+    return CertificationUserRef(
+        id=user.id,
+        username=user.username,
+        nickname=display_name(user),
+        email=user.email,
+        roles=list(item.roles),
+        certifications=list(certifications_from_roles(item.roles)),
+    )
+
+
+def _admin_certification_application_response(
+    item: CertificationApplicationItem,
+) -> AdminCertificationApplicationResponse:
+    base = certification_application_response(item)
+    return AdminCertificationApplicationResponse(
+        **base.model_dump(),
+        user=_certification_user_ref(item),
     )
 
 
 def _used_by_ref(user: User | None) -> RedeemCodeUserRef | None:
     if user is None:
         return None
-    return RedeemCodeUserRef(id=user.id, display_name=user.full_name or user.username)
+    return RedeemCodeUserRef(id=user.id, display_name=display_name(user))
 
 
 def _redeem_code_response(item: AdminRedeemCodeItem) -> AdminRedeemCodeResponse:
@@ -129,7 +171,7 @@ async def list_users(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> AdminUserListResponse:
-    """用户列表：支持用户名 / 邮箱 / 姓名搜索与角色过滤。"""
+    """用户列表：支持用户名 / 昵称 / 邮箱 / 实名搜索与角色过滤。"""
     await _require_admin(session, principal)
     page_result = await admin_service.list_users(
         session, q=q, role=role, page=page, page_size=page_size
@@ -159,24 +201,20 @@ async def update_user(
     payload: AdminUserUpdateRequest,
     principal: CurrentUserDep,
     session: SessionDep,
-    guard: Annotated[EnforcerGuard, Depends(get_enforcer_guard)],
 ) -> AdminUserResponse:
-    """更新用户资料 / 启用状态 / 认证状态；认证变更后立即刷新 Casbin 投影。"""
+    """更新用户昵称 / 邮箱 / 启用状态；实名与认证只能走认证审核。"""
     await _require_admin(session, principal)
     try:
         item = await admin_service.update_user(
             session,
             actor_id=principal.user_id,
             user_id=user_id,
-            full_name=payload.full_name,
+            nickname=payload.nickname,
             email=payload.email,
             is_active=payload.is_active,
-            certification=payload.certification,
         )
     except admin_service.AdminError as exc:
         raise _http_error(exc) from exc
-    if payload.certification is not None:
-        guard.resync_user(user_id, item.roles)
     return _user_response(item)
 
 
@@ -203,6 +241,87 @@ async def adjust_user_wallet(
     except admin_service.AdminError as exc:
         raise _http_error(exc) from exc
     return _user_response(item)
+
+
+@router.get(
+    "/certification-applications",
+    response_model=AdminCertificationApplicationListResponse,
+)
+async def list_certification_applications(
+    principal: CurrentUserDep,
+    session: SessionDep,
+    status_filter: Annotated[CertificationStatus | None, Query(alias="status")] = None,
+    type_filter: Annotated[CertificationType | None, Query(alias="type")] = None,
+    q: Annotated[str | None, Query(max_length=120)] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> AdminCertificationApplicationListResponse:
+    """认证申请列表：支持状态 / 类型 / 关键字过滤，最新在前。"""
+    await _require_admin(session, principal)
+    page_result = await certification_service.list_applications(
+        session,
+        status=status_filter,
+        application_type=type_filter,
+        q=q,
+        page=page,
+        page_size=page_size,
+    )
+    return AdminCertificationApplicationListResponse(
+        items=[_admin_certification_application_response(item) for item in page_result.items],
+        total=page_result.total,
+        page=page_result.page,
+        page_size=page_result.page_size,
+    )
+
+
+@router.post(
+    "/certification-applications/{application_id}/approve",
+    response_model=AdminCertificationApplicationResponse,
+)
+async def approve_certification_application(
+    application_id: int,
+    principal: CurrentUserDep,
+    session: SessionDep,
+    guard: Annotated[EnforcerGuard, Depends(get_enforcer_guard)],
+    payload: CertificationReviewRequest | None = None,
+) -> AdminCertificationApplicationResponse:
+    """通过认证申请：写入实名 / 认证角色并立即刷新 Casbin 投影。"""
+    await _require_admin(session, principal)
+    try:
+        item = await certification_service.approve_application(
+            session,
+            application_id=application_id,
+            actor_id=principal.user_id,
+            note=payload.note if payload is not None else None,
+        )
+    except CertificationError as exc:
+        raise _http_error(exc) from exc
+    guard.resync_user(item.user.id, item.roles)
+    return _admin_certification_application_response(item)
+
+
+@router.post(
+    "/certification-applications/{application_id}/reject",
+    response_model=AdminCertificationApplicationResponse,
+)
+async def reject_certification_application(
+    application_id: int,
+    principal: CurrentUserDep,
+    session: SessionDep,
+    payload: CertificationReviewRequest | None = None,
+) -> AdminCertificationApplicationResponse:
+    """驳回认证申请：只改申请状态与审批意见，不动用户角色。"""
+    await _require_admin(session, principal)
+    try:
+        item = await certification_service.reject_application(
+            session,
+            application_id=application_id,
+            actor_id=principal.user_id,
+            note=payload.note if payload is not None else None,
+        )
+    except CertificationError as exc:
+        raise _http_error(exc) from exc
+    return _admin_certification_application_response(item)
 
 
 @router.get("/redeem-codes", response_model=AdminRedeemCodeListResponse)

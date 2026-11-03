@@ -6,6 +6,8 @@ import type { TokenProvider } from '../../token-provider'
 import type { AdminGateway } from '../gateway'
 import { AdminBff } from '../service'
 import {
+  buildAdminCertificationApplicationDto,
+  buildAdminCertificationApplicationListDto,
   buildAdminRoleListDto,
   buildAdminSettingsDto,
   buildAdminUserDto,
@@ -26,6 +28,13 @@ function createGateway(): AdminGateway {
     updateRedeemCode: vi.fn(async () => buildRedeemCodeDto({ status: 'disabled' })),
     getSettings: vi.fn(async () => buildAdminSettingsDto()),
     updateSettings: vi.fn(async () => buildAdminSettingsDto()),
+    listCertificationApplications: vi.fn(async () => buildAdminCertificationApplicationListDto()),
+    approveCertificationApplication: vi.fn(async () =>
+      buildAdminCertificationApplicationDto({ status: 'approved' }),
+    ),
+    rejectCertificationApplication: vi.fn(async () =>
+      buildAdminCertificationApplicationDto({ status: 'rejected', review_note: '材料不完整' }),
+    ),
   }
 }
 
@@ -49,7 +58,10 @@ describe('AdminBff', () => {
       page: 2,
       pageSize: 20,
     })
-    expect(model.users[0]?.roles).toEqual([{ key: 'enterprise', label: '企业', tone: 'accent' }])
+    expect(model.users[0]?.roles).toEqual([
+      { key: 'realname', label: '实名认证', tone: 'info' },
+      { key: 'enterprise', label: '企业', tone: 'accent' },
+    ])
     expect(model.total).toBe(1)
   })
 
@@ -60,19 +72,17 @@ describe('AdminBff', () => {
     expect(roles).toEqual([{ key: 'admin', label: '管理员', tone: 'accent' }])
   })
 
-  it('updates a user profile, status and certification', async () => {
+  it('updates a user nickname, email and status', async () => {
     await bff.updateUser('7', { isActive: false })
     await bff.updateUser('7', {
-      fullName: 'Luna Chen',
+      nickname: 'Luna Chen',
       email: 'luna@example.com',
-      certification: 'engineer',
     })
 
     expect(gateway.updateUser).toHaveBeenNthCalledWith(1, 'token-1', '7', { isActive: false })
     expect(gateway.updateUser).toHaveBeenNthCalledWith(2, 'token-1', '7', {
-      fullName: 'Luna Chen',
+      nickname: 'Luna Chen',
       email: 'luna@example.com',
-      certification: 'engineer',
     })
   })
 
@@ -143,6 +153,41 @@ describe('AdminBff', () => {
       'wallet_recharge_note',
     ])
     expect(saved.settings).toHaveLength(3)
+  })
+
+  it('lists certification applications with the filter', async () => {
+    const model = await bff.listCertificationApplications({
+      status: 'pending',
+      type: 'engineer',
+      q: '阿远',
+      page: 1,
+      pageSize: 20,
+    })
+
+    expect(gateway.listCertificationApplications).toHaveBeenCalledWith('token-1', {
+      status: 'pending',
+      type: 'engineer',
+      q: '阿远',
+      page: 1,
+      pageSize: 20,
+    })
+    expect(model.applications[0]?.statusLabel).toBe('待审核')
+    expect(model.applications[0]?.applicant?.displayName).toBe('会员（演示）')
+  })
+
+  it('approves and rejects certification applications', async () => {
+    const approved = await bff.approveCertificationApplication('11', '材料齐全')
+    const rejected = await bff.rejectCertificationApplication('11')
+
+    expect(gateway.approveCertificationApplication).toHaveBeenCalledWith(
+      'token-1',
+      '11',
+      '材料齐全',
+    )
+    expect(approved.statusLabel).toBe('已通过')
+    expect(gateway.rejectCertificationApplication).toHaveBeenCalledWith('token-1', '11', undefined)
+    expect(rejected.statusLabel).toBe('已驳回')
+    expect(rejected.reviewNote).toBe('材料不完整')
   })
 
   it('fails with session-expired and never touches the gateway without a token', async () => {

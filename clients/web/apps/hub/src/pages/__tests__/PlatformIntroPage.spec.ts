@@ -16,7 +16,8 @@ vi.mock('@/stores/auth', () => ({
       status: 'active',
       statusLabel: '已启用',
       isAdmin: true,
-      certification: null,
+      nickname: '系统管理员',
+      certifications: [],
       roles: [{ key: 'admin', label: '管理员', tone: 'accent' }],
       permissionGroups: [],
       permissionCount: 0,
@@ -48,9 +49,13 @@ async function mountIntro() {
       { path: '/fde/applications', name: 'fde-applications', component: EmptyView },
       { path: '/wallet', name: 'wallet', component: EmptyView },
       { path: '/admin/users', name: 'admin-users', component: EmptyView },
+      { path: '/admin/certifications', name: 'admin-certifications', component: EmptyView },
       { path: '/admin/redeem-codes', name: 'admin-redeem-codes', component: EmptyView },
       { path: '/admin/settings', name: 'admin-settings', component: EmptyView },
       { path: '/login', name: 'login', component: EmptyView },
+      { path: '/profile', name: 'profile', component: EmptyView },
+      { path: '/profiles/:id', name: 'public-profile', component: EmptyView },
+      { path: '/fde/orders/:id', name: 'fde-order-detail', component: EmptyView },
     ],
   })
   await router.push('/intro')

@@ -7,24 +7,22 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.schemas.fde import Certification
-
 RedeemCodeStatus = Literal["active", "used", "disabled"]
 RedeemCodeUpdateStatus = Literal["active", "disabled"]
-# 管理员可设置的认证状态：none 表示撤销企业 / 工程师认证。
-CertificationChoice = Literal["none", "enterprise", "engineer"]
 AdjustmentDirection = Literal["credit", "debit"]
 
 
 class AdminUserResponse(BaseModel):
     id: int
     username: str
-    email: str
+    nickname: str
+    # full_name 是实名，只由实名认证审核通过时写入，管理端不可编辑。
     full_name: str | None
+    email: str
     is_active: bool
     roles: list[str]
-    # 认证状态由角色派生：enterprise / engineer / null。
-    certification: Certification | None
+    # 认证列表由角色派生，顺序固定为 realname、enterprise、engineer。
+    certifications: list[str]
     balance_cents: int
     created_at: datetime
 
@@ -37,22 +35,16 @@ class AdminUserListResponse(BaseModel):
 
 
 class AdminUserUpdateRequest(BaseModel):
-    """PATCH 用户：字段全部可选，但至少要修改一项；角色只能通过 certification 间接调整。"""
+    """PATCH 用户：只允许改昵称 / 邮箱 / 启用状态，至少一项。"""
 
-    full_name: str | None = Field(default=None, min_length=1, max_length=128)
+    nickname: str | None = Field(default=None, min_length=1, max_length=64)
     email: str | None = Field(default=None, max_length=320)
     is_active: bool | None = None
-    certification: CertificationChoice | None = None
 
-    @field_validator("full_name", mode="before")
+    @field_validator("nickname", "email", mode="before")
     @classmethod
-    def _strip_full_name(cls, value: object) -> object:
+    def _strip(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
-
-    @field_validator("email", mode="before")
-    @classmethod
-    def _normalize_email(cls, value: object) -> object:
-        return value.strip().lower() if isinstance(value, str) else value
 
     @field_validator("email")
     @classmethod
@@ -69,12 +61,7 @@ class AdminUserUpdateRequest(BaseModel):
 
     @model_validator(mode="after")
     def _require_at_least_one(self) -> AdminUserUpdateRequest:
-        if (
-            self.full_name is None
-            and self.email is None
-            and self.is_active is None
-            and self.certification is None
-        ):
+        if self.nickname is None and self.email is None and self.is_active is None:
             raise ValueError("至少需要修改一项")
         return self
 
@@ -167,7 +154,6 @@ __all__ = [
     "AdminUserListResponse",
     "AdminUserResponse",
     "AdminUserUpdateRequest",
-    "CertificationChoice",
     "RedeemCodeBatchResponse",
     "RedeemCodeCreateRequest",
     "RedeemCodeStatus",

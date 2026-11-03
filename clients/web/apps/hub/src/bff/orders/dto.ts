@@ -18,10 +18,10 @@ export const orderPartyDtoSchema = z.object({
     .string()
     .nullish()
     .transform((value) => value ?? ''),
-  certification: z
-    .string()
+  certifications: z
+    .array(z.string())
     .nullish()
-    .transform((value) => value ?? null),
+    .transform((value) => value ?? []),
 })
 
 export const orderDtoSchema = z.object({
@@ -98,13 +98,6 @@ export const orderListDtoSchema = z.object({
     .transform((value) => value ?? 0),
 })
 
-export const orderDetailDtoSchema = orderDtoSchema.extend({
-  logs: z
-    .array(workLogDtoSchema)
-    .nullish()
-    .transform((value) => value ?? []),
-})
-
 export const applicationDtoSchema = z.object({
   id: idDtoSchema,
   order: orderDtoSchema,
@@ -125,6 +118,17 @@ export const applicationDtoSchema = z.object({
     .nullish()
     .transform((value) => value ?? null),
   created_at: z.string(),
+})
+
+export const orderDetailDtoSchema = orderDtoSchema.extend({
+  logs: z
+    .array(workLogDtoSchema)
+    .nullish()
+    .transform((value) => value ?? []),
+  applications: z
+    .array(applicationDtoSchema)
+    .nullish()
+    .transform((value) => value ?? []),
 })
 
 export const applicationListDtoSchema = z.object({

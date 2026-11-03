@@ -10,8 +10,10 @@ import type { StoredAuth, TokenStore } from '../token-store'
 const memberUser: UserDto = {
   id: 7,
   username: 'member',
+  nickname: '会员（演示）',
   email: 'member@example.com',
   full_name: '会员（演示）',
+  certifications: [],
   is_active: true,
   roles: ['member'],
   permissions: [
@@ -77,7 +79,7 @@ describe('AuthBff', () => {
       status: 'active',
       statusLabel: '已启用',
       isAdmin: false,
-      certification: null,
+      certifications: [],
       permissionCount: 2,
     })
     expect(session.viewer.roles).toEqual([{ key: 'member', label: '会员', tone: 'default' }])
@@ -105,7 +107,6 @@ describe('AuthBff', () => {
       {
         username: 'newbie',
         email: 'newbie@example.com',
-        fullName: '新会员',
         password: 'secret123',
       },
       false,
@@ -114,7 +115,6 @@ describe('AuthBff', () => {
     expect(gateway.register).toHaveBeenCalledWith({
       username: 'newbie',
       email: 'newbie@example.com',
-      fullName: '新会员',
       password: 'secret123',
     })
     expect(gateway.login).not.toHaveBeenCalled()
@@ -136,7 +136,6 @@ describe('AuthBff', () => {
         {
           username: 'member',
           email: 'member@example.com',
-          fullName: '会员',
           password: 'secret123',
         },
         false,
@@ -162,7 +161,7 @@ describe('AuthBff', () => {
 
     const session = await bff.login({ username: 'enterprise', password: 'secret' }, false)
 
-    expect(session.viewer.certification).toBe('enterprise')
+    expect(session.viewer.certifications).toEqual(['enterprise', 'engineer'])
     expect(session.viewer.roles.map((role) => role.key)).toEqual(['enterprise', 'engineer'])
     expect(session.viewer.capabilities).toEqual({
       publishOrder: true,
@@ -182,7 +181,7 @@ describe('AuthBff', () => {
     })
 
     const session = await bff.login({ username: 'engineer', password: 'secret' }, false)
-    expect(session.viewer.certification).toBe('engineer')
+    expect(session.viewer.certifications).toEqual(['engineer'])
   })
 
   it('derives wallet and admin capabilities from their policy probes', async () => {
@@ -203,7 +202,7 @@ describe('AuthBff', () => {
     const session = await bff.login({ username: 'admin', password: 'secret' }, false)
 
     expect(session.viewer.isAdmin).toBe(true)
-    expect(session.viewer.certification).toBeNull()
+    expect(session.viewer.certifications).toEqual([])
     expect(session.viewer.capabilities).toEqual({
       publishOrder: false,
       applyOrder: false,
@@ -225,8 +224,10 @@ describe('AuthBff', () => {
       user: {
         id: 'u-1',
         username: 'luna',
+        nickname: null,
         email: '',
         full_name: '   ',
+        certifications: [],
         is_active: undefined,
         roles: [],
         permissions: [],
@@ -241,7 +242,7 @@ describe('AuthBff', () => {
       email: null,
       initials: 'LU',
       status: 'active',
-      certification: null,
+      certifications: [],
       roles: [],
       permissionGroups: [],
       permissionCount: 0,
@@ -254,6 +255,28 @@ describe('AuthBff', () => {
         manageAdmin: false,
       },
     })
+  })
+
+  it('prefers the nickname and falls back to full_name then username', async () => {
+    vi.mocked(gateway.login).mockResolvedValueOnce({
+      access_token: 'access-1',
+      refresh_token: 'refresh-1',
+      user: { ...memberUser, nickname: '小会', full_name: '会员实名' },
+    })
+
+    const withNickname = await bff.login({ username: 'member', password: 'secret' }, false)
+    expect(withNickname.viewer.nickname).toBe('小会')
+    expect(withNickname.viewer.displayName).toBe('小会')
+
+    vi.mocked(gateway.login).mockResolvedValueOnce({
+      access_token: 'access-1',
+      refresh_token: 'refresh-1',
+      user: { ...memberUser, nickname: null, full_name: '会员实名' },
+    })
+
+    const withFullName = await bff.login({ username: 'member', password: 'secret' }, false)
+    expect(withFullName.viewer.nickname).toBe('会员实名')
+    expect(withFullName.viewer.displayName).toBe('会员实名')
   })
 
   it('exposes the current access token to other frontend BFFs only', async () => {

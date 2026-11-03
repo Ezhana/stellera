@@ -2,19 +2,35 @@
 import { computed } from 'vue'
 
 import UiChip from '@/components/ui/UiChip.vue'
-import { describeCertification, type Certification } from '@/models'
+import { describeCertification, type Certification, type CertificationMeta } from '@/models'
 
 interface CertificationMarkProps {
-  certification?: Certification
+  certifications?: readonly Certification[]
 }
 
 const props = withDefaults(defineProps<CertificationMarkProps>(), {
-  certification: null,
+  certifications: () => [],
 })
 
-const meta = computed(() => describeCertification(props.certification))
+const metas = computed<CertificationMeta[]>(() =>
+  props.certifications
+    .map((certification) => describeCertification(certification))
+    .filter((meta): meta is CertificationMeta => Boolean(meta)),
+)
 </script>
 
 <template>
-  <UiChip v-if="meta" class="certification-mark" :variant="meta.tone">{{ meta.label }}</UiChip>
+  <span v-if="metas.length" class="certification-mark">
+    <UiChip v-for="meta in metas" :key="meta.certification" :variant="meta.tone">
+      {{ meta.label }}
+    </UiChip>
+  </span>
 </template>
+
+<style scoped>
+.certification-mark {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--primitive-space-1);
+}
+</style>

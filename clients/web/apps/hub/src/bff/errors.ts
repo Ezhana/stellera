@@ -13,7 +13,8 @@ export type BffErrorCode =
   | 'malformed-response'
   | 'unknown'
 
-export type BffErrorContext = 'login' | 'session' | 'refresh' | 'orders' | 'wallet' | 'admin'
+export type BffErrorContext =
+  'login' | 'session' | 'refresh' | 'orders' | 'wallet' | 'admin' | 'profile'
 
 interface BffErrorOptions {
   status?: number

@@ -75,13 +75,12 @@ class AuthService:
         *,
         username: str,
         email: str,
-        full_name: str,
         password: str,
     ) -> TokenPair:
-        """公开注册：创建会员账号、授予 member 角色并直接签发令牌。
+        """公开注册：创建会员账号、生成昵称、授予 member 角色并直接签发令牌。
 
         用户名 / 邮箱都已由 schema 归一成小写，这里再做一次大小写不敏感的唯一性检查；
-        并发注册由数据库唯一约束兜底。
+        并发注册由数据库唯一约束兜底。昵称需要用户 id，flush 拿到自增主键后生成。
         """
         normalized_username = username.strip().lower()
         normalized_email = email.strip().lower()
@@ -110,7 +109,6 @@ class AuthService:
             username=normalized_username,
             email=normalized_email,
             hashed_password=hash_password(password),
-            full_name=full_name.strip(),
             is_active=True,
         )
         session.add(user)
@@ -120,6 +118,8 @@ class AuthService:
             await session.rollback()
             raise AuthConflictError() from exc
 
+        # 自动昵称可被用户后续在个人资料里修改；展示名优先取昵称。
+        user.nickname = f"用户{user.id:06d}"
         session.add(UserRole(user_id=user.id, role_id=member_role_id))
         await session.flush()
         # 先刷新 Casbin 投影再签发令牌，注册完成后立刻就能访问业务端点。

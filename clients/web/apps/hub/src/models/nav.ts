@@ -34,6 +34,12 @@ export const CONSOLE_NAV: readonly NavGroup[] = [
     children: [{ key: 'intro', label: '平台简介', icon: 'intro', routeName: 'intro' }],
   },
   {
+    key: 'account',
+    label: '个人',
+    icon: 'user',
+    children: [{ key: 'profile', label: '个人信息', icon: 'user', routeName: 'profile' }],
+  },
+  {
     key: 'fde',
     label: 'FDE 订单',
     icon: 'briefcase',
@@ -78,6 +84,12 @@ export const CONSOLE_NAV: readonly NavGroup[] = [
     requiresAdmin: true,
     children: [
       { key: 'admin-users', label: '用户', icon: 'user', routeName: 'admin-users' },
+      {
+        key: 'admin-certifications',
+        label: '认证审核',
+        icon: 'shield',
+        routeName: 'admin-certifications',
+      },
       {
         key: 'admin-redeem-codes',
         label: '兑换码',

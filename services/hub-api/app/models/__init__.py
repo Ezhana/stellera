@@ -1,6 +1,7 @@
 """SQLAlchemy 模型集中导出，Alembic 通过 import app.models 拿到完整 metadata。"""
 
 from app.models.base import Base, TimestampMixin, ensure_utc, utcnow
+from app.models.certification import CertificationApplication
 from app.models.fde import FdeOrder, FdeOrderApplication, FdeOrderLog
 from app.models.rbac import Permission, Role, RolePermission, UserRole
 from app.models.redeem import RedeemCode
@@ -11,6 +12,7 @@ from app.models.wallet import Wallet, WalletTransaction
 
 __all__ = [
     "Base",
+    "CertificationApplication",
     "FdeOrder",
     "FdeOrderApplication",
     "FdeOrderLog",

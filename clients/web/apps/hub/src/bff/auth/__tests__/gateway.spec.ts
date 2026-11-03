@@ -78,7 +78,6 @@ describe('HttpAuthGateway', () => {
     const result = await gateway.register({
       username: 'newbie',
       email: 'newbie@example.com',
-      fullName: '新会员',
       password: 'secret123',
     })
 
@@ -87,7 +86,6 @@ describe('HttpAuthGateway', () => {
       body: {
         username: 'newbie',
         email: 'newbie@example.com',
-        full_name: '新会员',
         password: 'secret123',
       },
     })

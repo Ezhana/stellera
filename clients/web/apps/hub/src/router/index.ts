@@ -45,6 +45,18 @@ const routes: RouteRecordRaw[] = [
     redirect: '/intro',
   },
   {
+    path: '/profile',
+    name: 'profile',
+    component: () => import('@/pages/ProfilePage.vue'),
+    meta: { title: '个人信息', requiresAuth: true },
+  },
+  {
+    path: '/profiles/:id',
+    name: 'public-profile',
+    component: () => import('@/pages/PublicProfilePage.vue'),
+    meta: { title: '公开主页', requiresAuth: true },
+  },
+  {
     path: '/fde/hall',
     name: 'fde-hall',
     component: () => import('@/pages/fde/OrderHallPage.vue'),
@@ -69,6 +81,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '我的申请', requiresAuth: true },
   },
   {
+    path: '/fde/orders/:id',
+    name: 'fde-order-detail',
+    component: () => import('@/pages/fde/OrderDetailPage.vue'),
+    meta: { title: '订单详情', requiresAuth: true },
+  },
+  {
     path: '/wallet',
     name: 'wallet',
     component: () => import('@/pages/wallet/WalletPage.vue'),
@@ -79,6 +97,12 @@ const routes: RouteRecordRaw[] = [
     name: 'admin-users',
     component: () => import('@/pages/admin/AdminUsersPage.vue'),
     meta: { title: '用户管理', requiresAuth: true, requiresAdmin: true },
+  },
+  {
+    path: '/admin/certifications',
+    name: 'admin-certifications',
+    component: () => import('@/pages/admin/AdminCertificationPage.vue'),
+    meta: { title: '认证审核', requiresAuth: true, requiresAdmin: true },
   },
   {
     path: '/admin/redeem-codes',

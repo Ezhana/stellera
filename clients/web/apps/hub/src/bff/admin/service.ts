@@ -1,4 +1,6 @@
 import type {
+  AdminCertificationApplicationListModel,
+  AdminCertificationApplicationView,
   AdminRedeemCodeBatch,
   AdminRedeemCodeListModel,
   AdminRedeemCodeStatus,
@@ -13,6 +15,8 @@ import { BffError, toBffError } from '../errors'
 import type { TokenProvider } from '../token-provider'
 import type { AdminGateway } from './gateway'
 import {
+  toAdminCertificationApplicationListModel,
+  toAdminCertificationApplicationView,
   toAdminRedeemCodeBatch,
   toAdminRedeemCodeListModel,
   toAdminRedeemCodeView,
@@ -22,6 +26,7 @@ import {
   toAdminUserView,
 } from './mapper'
 import type {
+  AdminCertificationApplicationFilter,
   AdminRedeemCodeFilter,
   AdminUserFilter,
   AdminWalletAdjustmentInput,
@@ -104,6 +109,47 @@ export class AdminBff {
     const token = this.requireToken()
     try {
       return toAdminRedeemCodeView(await this.gateway.updateRedeemCode(token, id, status))
+    } catch (error) {
+      throw toBffError(error, 'admin')
+    }
+  }
+
+  async listCertificationApplications(
+    filter?: AdminCertificationApplicationFilter,
+  ): Promise<AdminCertificationApplicationListModel> {
+    const token = this.requireToken()
+    try {
+      return toAdminCertificationApplicationListModel(
+        await this.gateway.listCertificationApplications(token, filter),
+      )
+    } catch (error) {
+      throw toBffError(error, 'admin')
+    }
+  }
+
+  async approveCertificationApplication(
+    id: string,
+    note?: string | null,
+  ): Promise<AdminCertificationApplicationView> {
+    const token = this.requireToken()
+    try {
+      return toAdminCertificationApplicationView(
+        await this.gateway.approveCertificationApplication(token, id, note),
+      )
+    } catch (error) {
+      throw toBffError(error, 'admin')
+    }
+  }
+
+  async rejectCertificationApplication(
+    id: string,
+    note?: string | null,
+  ): Promise<AdminCertificationApplicationView> {
+    const token = this.requireToken()
+    try {
+      return toAdminCertificationApplicationView(
+        await this.gateway.rejectCertificationApplication(token, id, note),
+      )
     } catch (error) {
       throw toBffError(error, 'admin')
     }

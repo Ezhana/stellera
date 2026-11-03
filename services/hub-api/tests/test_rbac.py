@@ -37,6 +37,11 @@ BUSINESS_PERMISSIONS = {
     ("/api/v1/fde/applications/*/approve", "^POST$"),
     ("/api/v1/fde/applications/*/reject", "^POST$"),
     ("/api/v1/fde/applications/*/withdraw", "^POST$"),
+    ("/api/v1/profile", "^GET$"),
+    ("/api/v1/profile", "^PATCH$"),
+    ("/api/v1/profile/certification-applications", "^GET$"),
+    ("/api/v1/profile/certification-applications", "^POST$"),
+    ("/api/v1/profiles/*", "^GET$"),
 }
 
 # 用真实 HTTP 方法与代表性路径验证 Casbin 矩阵（策略 action 是 ^GET$ 形式的正则）。
@@ -57,6 +62,11 @@ BUSINESS_ENDPOINTS = {
     ("POST", "/api/v1/fde/applications/1/approve"),
     ("POST", "/api/v1/fde/applications/1/reject"),
     ("POST", "/api/v1/fde/applications/1/withdraw"),
+    ("GET", "/api/v1/profile"),
+    ("PATCH", "/api/v1/profile"),
+    ("GET", "/api/v1/profile/certification-applications"),
+    ("POST", "/api/v1/profile/certification-applications"),
+    ("GET", "/api/v1/profiles/1"),
 }
 
 
@@ -142,7 +152,6 @@ def test_anonymous_can_register_but_not_use_business_api(app, client: TestClient
         json={
             "username": "rbac_register",
             "email": "rbac_register@example.com",
-            "full_name": "RBAC 注册",
             "password": "secret123",
         },
     )
@@ -153,8 +162,8 @@ def test_role_hierarchy_matches_expected_matrix(app, client: TestClient) -> None
     # client fixture 用于触发 lifespan（把 PG/SQLite 中的 RBAC 投影到 enforcer）。
     guard: EnforcerGuard = app.state.enforcer_guard
 
-    # 角色树：authenticated -> member -> enterprise / engineer / admin。
-    for role_name in ("authenticated", "member", "enterprise", "engineer", "admin"):
+    # 角色树：authenticated -> member -> realname / enterprise / engineer / admin。
+    for role_name in ("authenticated", "member", "realname", "enterprise", "engineer", "admin"):
         assert guard.enforce(f"role:{role_name}", "/api/v1/auth/me", "GET") is True
     for retired in ("viewer", "operator"):
         assert guard.enforce(f"role:{retired}", "/api/v1/auth/me", "GET") is False
@@ -163,6 +172,7 @@ def test_role_hierarchy_matches_expected_matrix(app, client: TestClient) -> None
     for method, path in BUSINESS_ENDPOINTS:
         assert guard.enforce("role:authenticated", path, method) is True, (method, path)
         assert guard.enforce("role:member", path, method) is True, (method, path)
+        assert guard.enforce("role:realname", path, method) is True, (method, path)
         assert guard.enforce("role:enterprise", path, method) is True, (method, path)
         assert guard.enforce("role:engineer", path, method) is True, (method, path)
 
@@ -172,6 +182,8 @@ def test_role_hierarchy_matches_expected_matrix(app, client: TestClient) -> None
 
     # 管理端：admin 通配；其它角色即使继承了全部业务端点也进不去管理端。
     assert guard.enforce("role:admin", "/api/v1/admin/users", "GET") is True
+    assert guard.enforce("role:admin", "/api/v1/admin/certification-applications", "GET") is True
+    assert guard.enforce("role:realname", "/api/v1/admin/users", "GET") is False
     assert guard.enforce("role:admin", "/api/v1/fde/orders", "DELETE") is True
     assert guard.enforce("role:member", "/api/v1/admin/users", "GET") is False
     assert guard.enforce("role:enterprise", "/api/v1/admin/users", "GET") is False
@@ -248,8 +260,9 @@ def test_me_permissions_follow_role_hierarchy(client: TestClient) -> None:
     admin_me = client.get(f"{API_V1}/auth/me", headers=auth_headers(admin["access_token"])).json()
     admin_permissions = {(item["object"], item["action"]) for item in admin_me["permissions"]}
     assert admin_me["roles"] == ["admin"]
-    # 16 条业务权限 + admin 通配 = 17 条。
-    assert len(admin_permissions) == 17
+    # 21 条业务权限 + admin 通配 = 22 条。
+    assert len(admin_permissions) == 22
+    assert len(BUSINESS_PERMISSIONS) == 21
     assert ("/api/v1/*", "^(GET|POST|PUT|PATCH|DELETE)$") in admin_permissions
     assert BUSINESS_PERMISSIONS <= admin_permissions
     # 历史角色 / 认领完成端点不再出现。
