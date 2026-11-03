@@ -1,3 +1,7 @@
+include:
+  - ./postgres/compose.yaml
+  - ./new-api/compose.yaml
+
 services:
   redis:
     image: ${REDIS_IMAGE:-redis:latest}
@@ -13,7 +17,3 @@ services:
       --appendonly ${REDIS_APPENDONLY:-no}
       --maxmemory ${REDIS_MAXMEMORY:-1gb}
       --maxmemory-policy ${REDIS_MAXMEMORY_POLICY:-allkeys-lru}
-
-include:
-  - ./postgres/compose.yaml
-  - ./new-api/compose.yaml
