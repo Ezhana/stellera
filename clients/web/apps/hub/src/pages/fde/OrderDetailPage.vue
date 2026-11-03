@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
-import { z } from 'zod'
+import { computed, onMounted, ref, watch } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { BffError } from '@/bff/errors'
 import { ordersBff } from '@/bff/orders'
 import { profileBff } from '@/bff/profile'
 import PageHeader from '@/components/console/PageHeader.vue'
 import CertificationMark from '@/components/identity/CertificationMark.vue'
+import ApplyOrderModal from '@/components/orders/ApplyOrderModal.vue'
+import DeliveryApplicationDrawer from '@/components/orders/DeliveryApplicationDrawer.vue'
+import WorkLogDrawer from '@/components/orders/WorkLogDrawer.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -20,6 +22,7 @@ import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
 const route = useRoute()
+const router = useRouter()
 const viewer = computed(() => auth.viewer)
 const viewerId = computed(() => auth.viewer?.id ?? '')
 
@@ -34,35 +37,20 @@ const busyAction = ref<string | null>(null)
 const confirmingCancel = ref(false)
 const announcement = ref('')
 
+const applyOpen = ref(false)
+const applyError = ref('')
+
 const workLogOpen = ref(false)
-const workLogContent = ref('')
-const workLogHours = ref('')
 const workLogError = ref('')
-const workLogContentError = ref('')
 
 const deliveryOpen = ref(false)
-const deliveryMessage = ref('')
 const deliveryError = ref('')
 
 const rejectingId = ref<string | null>(null)
 const rejectNote = ref('')
 const rejectError = ref('')
 
-const logSchema = z.object({
-  content: z
-    .string()
-    .trim()
-    .min(1, '请输入工作日志内容')
-    .max(4000, '工作日志内容不能超过 4000 个字符'),
-  hours: z
-    .string()
-    .trim()
-    .refine((value) => value === '' || /^\d+(\.\d{1,2})?$/.test(value), '工时需为数字')
-    .transform((value) => (value === '' ? null : Number(value)))
-    .refine((value) => value === null || (value >= 0 && value <= 24), '工时需在 0–24 小时之间'),
-})
-
-const deliverySchema = z.string().trim().max(500, '交付说明不能超过 500 个字符')
+const createdNoticeVisible = ref(false)
 
 const isPublisher = computed(() =>
   Boolean(order.value && order.value.publisherId === viewerId.value),
@@ -191,12 +179,27 @@ async function runAction(
   }
 }
 
-async function applyForAccept(): Promise<void> {
-  await runAction(
-    'apply',
-    () => ordersBff.applyForOrder(order.value!.id, 'accept'),
-    '接单申请已提交，等待发布者审批。',
-  )
+function openApply(): void {
+  resetActionState()
+  applyError.value = ''
+  applyOpen.value = true
+}
+
+async function submitAcceptApplication(message: string): Promise<void> {
+  if (!order.value || busyAction.value) return
+  busyAction.value = 'apply'
+  applyError.value = ''
+  try {
+    await ordersBff.applyForOrder(order.value.id, 'accept', message)
+    applyOpen.value = false
+    successMessage.value = '接单申请已提交，等待发布者审批。'
+    announcement.value = successMessage.value
+    await loadOrder(false)
+  } catch (error) {
+    applyError.value = toErrorMessage(error, '申请接单失败，请稍后重试。')
+  } finally {
+    busyAction.value = null
+  }
 }
 
 async function cancelOrder(): Promise<void> {
@@ -252,65 +255,62 @@ async function submitReject(application: OrderApplicationView): Promise<void> {
 
 function openWorkLog(): void {
   resetActionState()
-  deliveryOpen.value = false
-  workLogOpen.value = true
-  workLogContent.value = ''
-  workLogHours.value = ''
   workLogError.value = ''
-  workLogContentError.value = ''
+  workLogOpen.value = true
 }
 
-async function submitWorkLog(): Promise<void> {
-  if (!order.value) return
+async function submitWorkLog(input: {
+  content: string
+  workedHours: number | null
+}): Promise<void> {
+  if (!order.value || busyAction.value) return
+  busyAction.value = 'work-log'
   workLogError.value = ''
-  workLogContentError.value = ''
-  const parsed = logSchema.safeParse({ content: workLogContent.value, hours: workLogHours.value })
-  if (!parsed.success) {
-    const message = parsed.error.issues[0]?.message ?? '请输入工作日志内容'
-    if (parsed.error.issues[0]?.path[0] === 'content') workLogContentError.value = message
-    else workLogError.value = message
-    return
+  try {
+    await ordersBff.addWorkLog(order.value.id, input)
+    workLogOpen.value = false
+    successMessage.value = '工作日志已提交。'
+    announcement.value = successMessage.value
+    await loadOrder(false)
+  } catch (error) {
+    workLogError.value = toErrorMessage(error, '工作日志提交失败，请稍后重试。')
+  } finally {
+    busyAction.value = null
   }
-
-  const applied = await runAction(
-    'work-log',
-    () =>
-      ordersBff.addWorkLog(order.value!.id, {
-        content: parsed.data.content,
-        workedHours: parsed.data.hours,
-      }),
-    '工作日志已提交。',
-  )
-  if (applied) workLogOpen.value = false
 }
 
 function openDelivery(): void {
   resetActionState()
-  workLogOpen.value = false
+  deliveryError.value = ''
   deliveryOpen.value = true
-  deliveryMessage.value = ''
-  deliveryError.value = ''
 }
 
-async function submitDelivery(): Promise<void> {
-  if (!order.value) return
+async function submitDelivery(message: string): Promise<void> {
+  if (!order.value || busyAction.value) return
+  busyAction.value = 'delivery'
   deliveryError.value = ''
-  const parsed = deliverySchema.safeParse(deliveryMessage.value)
-  if (!parsed.success) {
-    deliveryError.value = parsed.error.issues[0]?.message ?? '交付说明不能超过 500 个字符'
-    return
+  try {
+    await ordersBff.applyForOrder(order.value.id, 'delivery', message)
+    deliveryOpen.value = false
+    successMessage.value = '交付申请已提交，等待发布者审批。'
+    announcement.value = successMessage.value
+    await loadOrder(false)
+  } catch (error) {
+    deliveryError.value = toErrorMessage(error, '交付申请提交失败，请稍后重试。')
+  } finally {
+    busyAction.value = null
   }
-
-  const applied = await runAction(
-    'delivery',
-    () => ordersBff.applyForOrder(order.value!.id, 'delivery', parsed.data),
-    '交付申请已提交，等待发布者审批。',
-  )
-  if (applied) deliveryOpen.value = false
 }
 
-onMounted(() => {
-  void loadOrder()
+onMounted(async () => {
+  if (route.query.created === '1') {
+    createdNoticeVisible.value = true
+    announcement.value = '需求已发布，预算已进入托管。'
+    const query = { ...route.query }
+    delete query.created
+    void router.replace({ query })
+  }
+  await loadOrder()
 })
 
 watch(
@@ -342,6 +342,16 @@ watch(
       </PageHeader>
 
       <p class="visually-hidden" role="status" aria-live="polite">{{ announcement }}</p>
+
+      <UiAlert
+        v-if="createdNoticeVisible"
+        variant="success"
+        title="发布成功"
+        dismissible
+        @close="createdNoticeVisible = false"
+      >
+        需求已发布，预算已进入托管。
+      </UiAlert>
 
       <UiAlert
         v-if="successMessage"
@@ -384,7 +394,7 @@ watch(
               v-if="canApply"
               size="sm"
               :loading="busyAction === 'apply'"
-              @click="applyForAccept"
+              @click="openApply"
             >
               申请接单
             </UiButton>
@@ -510,104 +520,6 @@ watch(
             <p v-else class="order-detail__party-empty">尚未有工程师接单。</p>
           </UiCard>
         </section>
-
-        <UiCard v-if="workLogOpen" padding="lg" class="order-detail__section">
-          <header class="order-detail__section-head">
-            <h2 class="order-detail__section-title">提交工作日志</h2>
-          </header>
-          <UiAlert
-            v-if="workLogError"
-            variant="error"
-            title="提交失败"
-            dismissible
-            @close="workLogError = ''"
-          >
-            {{ workLogError }}
-          </UiAlert>
-          <form class="order-detail__form" novalidate @submit.prevent="submitWorkLog">
-            <div class="order-detail__field order-detail__field--wide">
-              <label class="order-detail__label" for="detail-work-log">日志内容</label>
-              <textarea
-                id="detail-work-log"
-                v-model="workLogContent"
-                class="order-detail__textarea"
-                rows="4"
-                name="detail-work-log"
-                :maxlength="4000"
-                :disabled="busyAction === 'work-log'"
-                placeholder="说明今天完成的交付内容与进展…"
-              />
-              <p v-if="workLogContentError" class="order-detail__error" role="alert">
-                {{ workLogContentError }}
-              </p>
-              <p v-else class="order-detail__help">已输入 {{ workLogContent.length }} / 4000 字</p>
-            </div>
-            <UiInput
-              v-model="workLogHours"
-              label="工时 / 小时（可选）"
-              name="detail-work-hours"
-              inputmode="decimal"
-              placeholder="0–24"
-              :disabled="busyAction === 'work-log'"
-            />
-            <div class="order-detail__form-actions order-detail__field--wide">
-              <UiButton type="submit" :loading="busyAction === 'work-log'">提交日志</UiButton>
-              <UiButton
-                variant="ghost"
-                :disabled="busyAction === 'work-log'"
-                @click="workLogOpen = false"
-              >
-                取消
-              </UiButton>
-            </div>
-          </form>
-        </UiCard>
-
-        <UiCard v-if="deliveryOpen" padding="lg" class="order-detail__section">
-          <header class="order-detail__section-head">
-            <h2 class="order-detail__section-title">申请交付</h2>
-            <p class="order-detail__section-hint">
-              提交后由发布者确认交付，确认后托管资金结算给工程师。
-            </p>
-          </header>
-          <UiAlert
-            v-if="deliveryError"
-            variant="error"
-            title="提交失败"
-            dismissible
-            @close="deliveryError = ''"
-          >
-            {{ deliveryError }}
-          </UiAlert>
-          <form class="order-detail__form" novalidate @submit.prevent="submitDelivery">
-            <div class="order-detail__field order-detail__field--wide">
-              <label class="order-detail__label" for="detail-delivery-message">
-                交付说明（可选）
-              </label>
-              <textarea
-                id="detail-delivery-message"
-                v-model="deliveryMessage"
-                class="order-detail__textarea"
-                rows="3"
-                name="detail-delivery-message"
-                :maxlength="500"
-                :disabled="busyAction === 'delivery'"
-                placeholder="简要说明交付物与验收方式…"
-              />
-              <p class="order-detail__help">已输入 {{ deliveryMessage.length }} / 500 字</p>
-            </div>
-            <div class="order-detail__form-actions order-detail__field--wide">
-              <UiButton type="submit" :loading="busyAction === 'delivery'">提交交付申请</UiButton>
-              <UiButton
-                variant="ghost"
-                :disabled="busyAction === 'delivery'"
-                @click="deliveryOpen = false"
-              >
-                取消
-              </UiButton>
-            </div>
-          </form>
-        </UiCard>
 
         <UiCard padding="lg" class="order-detail__section">
           <header class="order-detail__section-head">
@@ -761,6 +673,30 @@ watch(
           </div>
         </UiCard>
       </template>
+
+      <ApplyOrderModal
+        v-model:open="applyOpen"
+        :order="order"
+        :submitting="busyAction === 'apply'"
+        :error="applyError"
+        @confirm="submitAcceptApplication"
+      />
+
+      <WorkLogDrawer
+        v-model:open="workLogOpen"
+        :order="order"
+        :submitting="busyAction === 'work-log'"
+        :error="workLogError"
+        @submit="submitWorkLog"
+      />
+
+      <DeliveryApplicationDrawer
+        v-model:open="deliveryOpen"
+        :order="order"
+        :submitting="busyAction === 'delivery'"
+        :error="deliveryError"
+        @submit="submitDelivery"
+      />
     </div>
   </ConsoleLayout>
 </template>
@@ -981,21 +917,6 @@ watch(
   font-size: var(--font-size-small);
 }
 
-.order-detail__form {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--primitive-space-4);
-}
-
-.order-detail__field {
-  display: flex;
-  flex-direction: column;
-}
-
-.order-detail__field--wide {
-  grid-column: 1 / -1;
-}
-
 .order-detail__label {
   margin-bottom: var(--primitive-space-1);
   color: var(--color-fg-muted);
@@ -1181,8 +1102,7 @@ watch(
 }
 
 @media (max-width: 900px) {
-  .order-detail__parties,
-  .order-detail__form {
+  .order-detail__parties {
     grid-template-columns: minmax(0, 1fr);
   }
 }

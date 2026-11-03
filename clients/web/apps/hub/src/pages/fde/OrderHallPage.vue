@@ -6,6 +6,7 @@ import { BffError } from '@/bff/errors'
 import { ordersBff, summarizeOrders, upsertOrder } from '@/bff/orders'
 import type { OrderRealtimeConnection, OrderRealtimeState } from '@/bff/orders'
 import PageHeader from '@/components/console/PageHeader.vue'
+import ApplyOrderModal from '@/components/orders/ApplyOrderModal.vue'
 import LiveStatus from '@/components/orders/LiveStatus.vue'
 import OrderEmptyState from '@/components/orders/OrderEmptyState.vue'
 import OrderStatsGrid from '@/components/orders/OrderStatsGrid.vue'
@@ -30,6 +31,9 @@ const myPendingApplications = ref<OrderApplicationView[]>([])
 const loading = ref(true)
 const refreshing = ref(false)
 const applyingOrderId = ref<string | null>(null)
+const selectedOrder = ref<FdeOrderView | null>(null)
+const applyModalOpen = ref(false)
+const applyError = ref('')
 const errorMessage = ref('')
 const successMessage = ref('')
 const statusFilter = ref<FdeOrderStatus | 'all'>('all')
@@ -121,19 +125,31 @@ async function loadMyPendingApplications(): Promise<void> {
   }
 }
 
-async function applyForOrder(order: FdeOrderView): Promise<void> {
+function openApply(order: FdeOrderView): void {
   if (applyingOrderId.value) return
-  applyingOrderId.value = order.id
   successMessage.value = ''
-  errorMessage.value = ''
+  applyError.value = ''
+  selectedOrder.value = order
+  applyModalOpen.value = true
+}
+
+async function submitApplication(message: string): Promise<void> {
+  const order = selectedOrder.value
+  if (!order || applyingOrderId.value) return
+
+  applyingOrderId.value = order.id
+  applyError.value = ''
+  successMessage.value = ''
 
   try {
-    await ordersBff.applyForOrder(order.id, 'accept')
+    await ordersBff.applyForOrder(order.id, 'accept', message)
+    applyModalOpen.value = false
+    selectedOrder.value = null
     successMessage.value = '申请已提交，等待发布者审批。'
     announcement.value = `已申请接单：${order.title}`
     await Promise.all([loadOrders(false), loadMyPendingApplications()])
   } catch (error) {
-    errorMessage.value = toErrorMessage(error)
+    applyError.value = toErrorMessage(error)
   } finally {
     applyingOrderId.value = null
   }
@@ -215,6 +231,10 @@ onBeforeUnmount(() => {
       >
         <template #actions>
           <LiveStatus :state="realtimeState" :last-event-label="lastEventLabel || undefined" />
+          <RouterLink class="order-page__link-button" :to="{ name: 'fde-publish' }">
+            <UiIcon name="plus" :size="16" />
+            发布需求
+          </RouterLink>
           <RouterLink class="order-page__link-button" :to="{ name: 'fde-published' }">
             我发布的
             <UiIcon name="arrow-right" :size="16" />
@@ -296,8 +316,8 @@ onBeforeUnmount(() => {
           "
         >
           <template #action>
-            <RouterLink class="order-page__link-button" :to="{ name: 'fde-published' }">
-              前往我发布的
+            <RouterLink class="order-page__link-button" :to="{ name: 'fde-publish' }">
+              发布需求
             </RouterLink>
           </template>
         </OrderEmptyState>
@@ -314,12 +334,7 @@ onBeforeUnmount(() => {
               <span class="order-page__action-hint">我发布的</span>
             </template>
             <template v-else-if="order.status === 'open'">
-              <UiButton
-                v-if="canApply(order)"
-                size="sm"
-                :loading="applyingOrderId === order.id"
-                @click="applyForOrder(order)"
-              >
+              <UiButton v-if="canApply(order)" size="sm" @click="openApply(order)">
                 申请接单
               </UiButton>
               <UiButton v-else size="sm" variant="secondary" disabled>已申请</UiButton>
@@ -328,6 +343,14 @@ onBeforeUnmount(() => {
           </template>
         </OrderTable>
       </section>
+
+      <ApplyOrderModal
+        v-model:open="applyModalOpen"
+        :order="selectedOrder"
+        :submitting="Boolean(applyingOrderId)"
+        :error="applyError"
+        @confirm="submitApplication"
+      />
     </div>
   </ConsoleLayout>
 </template>

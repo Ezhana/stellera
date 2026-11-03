@@ -110,7 +110,9 @@ async function mountPage(): Promise<{ wrapper: VueWrapper; router: Router }> {
   await router.push('/admin/users')
   await router.isReady()
 
-  const wrapper = mount(AdminUsersPage, { global: { plugins: [pinia, router] } })
+  const wrapper = mount(AdminUsersPage, {
+    global: { plugins: [pinia, router], stubs: { teleport: true } },
+  })
   await flushPromises()
   return { wrapper, router }
 }
@@ -191,7 +193,7 @@ describe('AdminUsersPage', () => {
     })
   })
 
-  it('saves the nickname and email from the inline editor without editing certifications', async () => {
+  it('saves the nickname and email from the drawer editor without editing certifications', async () => {
     vi.mocked(adminBff.updateUser).mockResolvedValue({
       ...enterpriseUser,
       nickname: 'Luna Zhang',
@@ -202,9 +204,10 @@ describe('AdminUsersPage', () => {
     const { wrapper } = await mountPage()
     await openEditor(wrapper)
 
-    expect(wrapper.text()).toContain('编辑「Luna Chen」的资料')
+    expect(wrapper.text()).toContain('编辑用户 · Luna Chen')
     expect(wrapper.find('input[name="edit-nickname"]').exists()).toBe(true)
     expect(wrapper.find('#edit-certification').exists()).toBe(false)
+    expect(wrapper.find('textarea[name="detail-reject-note"]').exists()).toBe(false)
 
     await wrapper.find('input[name="edit-nickname"]').setValue(' Luna Zhang ')
     await wrapper.find('input[name="edit-email"]').setValue(' luna.zhang@example.com ')
@@ -217,6 +220,7 @@ describe('AdminUsersPage', () => {
     })
     expect(wrapper.text()).toContain('已保存 Luna Zhang 的资料。')
     expect(adminBff.listUsers).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('input[name="edit-nickname"]').exists()).toBe(false)
   })
 
   it('validates the profile fields before calling the PATCH endpoint', async () => {
@@ -231,6 +235,7 @@ describe('AdminUsersPage', () => {
     expect(wrapper.text()).toContain('请输入昵称')
     expect(wrapper.text()).toContain('请输入有效的邮箱地址')
     expect(adminBff.updateUser).not.toHaveBeenCalled()
+    expect(wrapper.find('input[name="edit-nickname"]').exists()).toBe(true)
   })
 
   it('credits a user balance with yuan converted to cents', async () => {
@@ -249,6 +254,7 @@ describe('AdminUsersPage', () => {
     })
     expect(wrapper.text()).toContain('已为 Luna Chen 增加余额，当前余额 ¥10,500。')
     expect(adminBff.listUsers).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('form.admin-editor__grid').exists()).toBe(false)
   })
 
   it('debits a user balance and surfaces the backend overdraft conflict', async () => {

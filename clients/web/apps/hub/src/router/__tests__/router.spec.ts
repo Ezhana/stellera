@@ -33,6 +33,7 @@ describe('router guards', () => {
   it('lets an authenticated viewer open the new FDE order pages', async () => {
     expect(await go('/fde/hall')).toMatchObject({ name: 'fde-hall' })
     expect(await go('/fde/published')).toMatchObject({ name: 'fde-published' })
+    expect(await go('/fde/publish')).toMatchObject({ name: 'fde-publish' })
     expect(await go('/fde/assigned')).toMatchObject({ name: 'fde-assigned' })
     expect(await go('/fde/applications')).toMatchObject({ name: 'fde-applications' })
   })

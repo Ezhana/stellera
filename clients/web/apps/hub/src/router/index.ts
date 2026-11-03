@@ -69,6 +69,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '我发布的', requiresAuth: true },
   },
   {
+    path: '/fde/publish',
+    name: 'fde-publish',
+    component: () => import('@/pages/fde/PublishOrderPage.vue'),
+    meta: { title: '发布需求', requiresAuth: true },
+  },
+  {
     path: '/fde/assigned',
     name: 'fde-assigned',
     component: () => import('@/pages/fde/AssignedOrdersPage.vue'),

@@ -45,7 +45,8 @@ src/
 │   ├── describe.ts         # 原始 policy -> 中文分组/动作标签
 │   └── errors.ts           # BffError 稳定错误码（context：login/session/refresh/orders/wallet/profile/admin）
 ├── components/identity/    # CertificationMark 多认证 Badge
-├── components/ui/          # Obsidian 组件层（Button/Input/Checkbox/Card/Chip/Alert/BrandMark/Icon）
+├── components/orders/      # 订单表格、申请接单弹窗、工作日志/交付申请抽屉
+├── components/ui/          # Obsidian 组件层（Button/Input/Card/Chip/Alert/Modal/Drawer/Icon…）
 ├── layouts/                # AuthLayout（品牌面板 + 表单）、ConsoleLayout（侧栏 + 内容）
 ├── pages/                  # Login / Register / PlatformIntro / fde/* / wallet/* / profile/* / admin/* / NotFound
 ├── router/index.ts         # 路由与登录守卫（bootstrap + redirect + requiresAdmin）
@@ -92,6 +93,15 @@ feature BFF（token 注入、请求编排、错误归一化）
 - 认证申请按类型动态表单（实名 / 企业 / 工程师），企业/工程师需先实名；被驳回可重提；
 - `/admin/certifications` 认证审核页：筛选、查看完整资料、通过/驳回并刷新；
 - `/fde/orders/:id` 订单详情页：订单信息、双方公开资料、日志、全部申请与审批人/时间/理由，并按权限提供操作。
+
+## 主要交互组件
+
+- `/fde/publish` 发布需求独立页面；「我发布的」不再含内联表单，订单大厅与我发布的都链接到该页；
+- 申请接单：`ApplyOrderModal` 确认弹窗 + 可选备注（≤500 字），订单大厅与订单详情共用；
+- 右侧抽屉：`UiDrawer` 用于用户管理编辑（资料 + 余额调整）、提交工作日志（`WorkLogDrawer`）、
+  申请交付（`DeliveryApplicationDrawer`）；
+- `UiModal` / `UiDrawer` 均 Teleport 到 body，支持 ESC/遮罩关闭、body 滚动锁与焦点恢复；
+  表单校验、loading、错误提示沿用页面组件。
 
 ## 本地开发
 

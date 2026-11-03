@@ -83,6 +83,7 @@ function buildDetail(overrides: Partial<FdeOrderDetailView> = {}): FdeOrderDetai
 interface MountOptions {
   viewerId?: string
   applications?: FdeOrderDetailView['applications']
+  query?: Record<string, string>
 }
 
 async function mountPage(
@@ -116,10 +117,12 @@ async function mountPage(
       { path: '/wallet', name: 'wallet', component: EmptyView },
     ],
   })
-  await router.push('/fde/orders/42')
+  await router.push({ name: 'fde-order-detail', params: { id: '42' }, query: options.query })
   await router.isReady()
 
-  const wrapper = mount(OrderDetailPage, { global: { plugins: [pinia, router] } })
+  const wrapper = mount(OrderDetailPage, {
+    global: { plugins: [pinia, router], stubs: { teleport: true } },
+  })
   await flushPromises()
   return { wrapper, router }
 }
@@ -172,15 +175,21 @@ describe('OrderDetailPage', () => {
     expect(wrapper.text()).toContain('有医疗行业交付经验')
   })
 
-  it('lets a non-publisher apply to accept an open order', async () => {
+  it('lets a non-publisher apply to accept an open order through the modal', async () => {
     const { wrapper } = await mountPage({ viewerId: '8' })
 
     await findButton(wrapper, '申请接单')?.trigger('click')
     await flushPromises()
 
-    expect(ordersBff.applyForOrder).toHaveBeenCalledWith('42', 'accept')
+    expect(wrapper.text()).toContain('申请接单后需发布者审批')
+    await wrapper.find('textarea[name="apply-message"]').setValue('有医疗行业交付经验')
+    await findButton(wrapper, '确认申请')?.trigger('click')
+    await flushPromises()
+
+    expect(ordersBff.applyForOrder).toHaveBeenCalledWith('42', 'accept', '有医疗行业交付经验')
     expect(wrapper.text()).toContain('接单申请已提交，等待发布者审批。')
     expect(ordersBff.getOrder).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('textarea[name="apply-message"]').exists()).toBe(false)
   })
 
   it('lets the publisher cancel an open order after the second confirmation', async () => {
@@ -251,7 +260,7 @@ describe('OrderDetailPage', () => {
     expect(wrapper.text()).toContain('已确认交付，托管资金已结算给工程师。')
   })
 
-  it('lets the assigned engineer submit a work log and apply for delivery', async () => {
+  it('lets the assigned engineer submit a work log and apply for delivery from drawers', async () => {
     const inProgress = buildDetail({
       status: 'in_progress',
       statusLabel: '交付中',
@@ -266,9 +275,9 @@ describe('OrderDetailPage', () => {
 
     await findButton(wrapper, '提交工作日志')?.trigger('click')
     await flushPromises()
-    await wrapper.find('textarea[name="detail-work-log"]').setValue('完成 300 例标注')
-    await wrapper.find('input[name="detail-work-hours"]').setValue('6')
-    await wrapper.find('form').trigger('submit')
+    await wrapper.find('textarea[name="work-log-content"]').setValue('完成 300 例标注')
+    await wrapper.find('input[name="work-log-hours"]').setValue('6')
+    await findButton(wrapper, '提交日志')?.trigger('click')
     await flushPromises()
 
     expect(ordersBff.addWorkLog).toHaveBeenCalledWith('42', {
@@ -276,15 +285,30 @@ describe('OrderDetailPage', () => {
       workedHours: 6,
     })
     expect(wrapper.text()).toContain('工作日志已提交。')
+    expect(wrapper.find('textarea[name="work-log-content"]').exists()).toBe(false)
 
     await findButton(wrapper, '申请交付')?.trigger('click')
     await flushPromises()
-    await wrapper.find('textarea[name="detail-delivery-message"]').setValue('已按标准交付')
-    await wrapper.find('form').trigger('submit')
+    await wrapper.find('textarea[name="delivery-message"]').setValue('已按标准交付')
+    await findButton(wrapper, '提交交付申请')?.trigger('click')
     await flushPromises()
 
     expect(ordersBff.applyForOrder).toHaveBeenCalledWith('42', 'delivery', '已按标准交付')
     expect(wrapper.text()).toContain('交付申请已提交，等待发布者审批。')
+    expect(wrapper.find('textarea[name="delivery-message"]').exists()).toBe(false)
+  })
+
+  it('shows the one-time publish success notice after a created redirect', async () => {
+    const { wrapper, router } = await mountPage({ query: { created: '1' } })
+
+    expect(wrapper.text()).toContain('需求已发布，预算已进入托管。')
+    expect(router.currentRoute.value.query.created).toBeUndefined()
+
+    const dismiss = wrapper.find('.ui-alert__close')
+    await dismiss.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.ui-alert--success').exists()).toBe(false)
   })
 
   it('keeps a completed order read-only', async () => {

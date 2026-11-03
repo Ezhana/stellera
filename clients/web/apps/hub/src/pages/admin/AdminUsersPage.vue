@@ -9,6 +9,7 @@ import CertificationMark from '@/components/identity/CertificationMark.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiChip from '@/components/ui/UiChip.vue'
+import UiDrawer from '@/components/ui/UiDrawer.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import ConsoleLayout from '@/layouts/ConsoleLayout.vue'
 import type { AdminRoleOption, AdminUserView } from '@/models'
@@ -37,6 +38,7 @@ const pendingUserId = ref<string | null>(null)
 const nickname = ref('')
 const email = ref('')
 const profileErrors = reactive<{ nickname?: string; email?: string }>({})
+const profileSubmitError = ref('')
 const savingProfile = ref(false)
 
 const walletDirection = ref<'credit' | 'debit'>('credit')
@@ -46,6 +48,19 @@ const walletErrors = reactive<{ amount?: string; note?: string; submit?: string 
 const adjustingWallet = ref(false)
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
+
+const editingUser = computed(
+  () => users.value.find((user) => user.id === editingUserId.value) ?? null,
+)
+const editorOpen = computed({
+  get: () => editingUserId.value !== null,
+  set: (value: boolean) => {
+    if (!value) closeEditor()
+  },
+})
+const editorTitle = computed(() =>
+  editingUser.value ? `编辑用户 · ${editingUser.value.displayName}` : '编辑用户',
+)
 
 const profileSchema = z.object({
   nickname: z.string().trim().min(1, '请输入昵称').max(64, '昵称长度不能超过 64 个字符'),
@@ -153,28 +168,28 @@ function closeEditor(): void {
   editingUserId.value = null
   profileErrors.nickname = undefined
   profileErrors.email = undefined
+  profileSubmitError.value = ''
   resetWalletForm()
 }
 
 function openEditor(user: AdminUserView): void {
   successMessage.value = ''
   actionError.value = ''
-  if (editingUserId.value === user.id) {
-    closeEditor()
-    return
-  }
   editingUserId.value = user.id
   nickname.value = user.nickname
   email.value = user.email ?? ''
   profileErrors.nickname = undefined
   profileErrors.email = undefined
+  profileSubmitError.value = ''
   resetWalletForm()
 }
 
-async function saveProfile(user: AdminUserView): Promise<void> {
-  if (savingProfile.value) return
+async function saveProfile(): Promise<void> {
+  const user = editingUser.value
+  if (!user || savingProfile.value) return
   profileErrors.nickname = undefined
   profileErrors.email = undefined
+  profileSubmitError.value = ''
 
   const parsed = profileSchema.safeParse({
     nickname: nickname.value,
@@ -201,14 +216,15 @@ async function saveProfile(user: AdminUserView): Promise<void> {
     closeEditor()
     await loadUsers(false)
   } catch (error) {
-    actionError.value = toErrorMessage(error, '用户资料保存失败，请稍后重试。')
+    profileSubmitError.value = toErrorMessage(error, '用户资料保存失败，请稍后重试。')
   } finally {
     savingProfile.value = false
   }
 }
 
-async function adjustWallet(user: AdminUserView): Promise<void> {
-  if (adjustingWallet.value) return
+async function adjustWallet(): Promise<void> {
+  const user = editingUser.value
+  if (!user || adjustingWallet.value) return
   walletErrors.amount = undefined
   walletErrors.note = undefined
   walletErrors.submit = undefined
@@ -237,12 +253,10 @@ async function adjustWallet(user: AdminUserView): Promise<void> {
     })
     const verb = walletDirection.value === 'credit' ? '增加' : '扣减'
     successMessage.value = `已为 ${user.displayName} ${verb}余额，当前余额 ${updated.balanceLabel}。`
-    resetWalletForm()
+    closeEditor()
     await loadUsers(false)
   } catch (error) {
-    const message = toErrorMessage(error, '余额调整失败，请稍后重试。')
-    walletErrors.submit = message
-    actionError.value = message
+    walletErrors.submit = toErrorMessage(error, '余额调整失败，请稍后重试。')
   } finally {
     adjustingWallet.value = false
   }
@@ -418,103 +432,8 @@ onMounted(async () => {
                           {{ user.isActive ? '停用' : '启用' }}
                         </UiButton>
                         <UiButton variant="ghost" size="sm" @click="openEditor(user)">
-                          {{ editingUserId === user.id ? '收起编辑' : '编辑' }}
+                          编辑
                         </UiButton>
-                      </div>
-                    </td>
-                  </tr>
-
-                  <tr v-if="editingUserId === user.id" class="admin-table__row--editor">
-                    <td class="admin-table__cell" colspan="9">
-                      <div class="admin-editor">
-                        <section class="admin-editor__section" aria-label="用户资料">
-                          <p class="admin-editor__title">编辑「{{ user.displayName }}」的资料</p>
-                          <div class="admin-editor__grid">
-                            <UiInput
-                              v-model="nickname"
-                              label="昵称"
-                              name="edit-nickname"
-                              :maxlength="64"
-                              :error="profileErrors.nickname"
-                              :disabled="savingProfile"
-                            />
-                            <UiInput
-                              v-model="email"
-                              label="邮箱"
-                              name="edit-email"
-                              type="email"
-                              :maxlength="320"
-                              :error="profileErrors.email"
-                              :disabled="savingProfile"
-                            />
-                          </div>
-                          <p class="admin-editor__help">
-                            昵称会展示在订单与申请中；实名、企业、工程师认证由认证审核授予。
-                          </p>
-                          <div class="admin-editor__actions">
-                            <UiButton size="sm" :loading="savingProfile" @click="saveProfile(user)">
-                              保存资料
-                            </UiButton>
-                            <UiButton
-                              variant="ghost"
-                              size="sm"
-                              :disabled="savingProfile"
-                              @click="closeEditor"
-                            >
-                              取消
-                            </UiButton>
-                          </div>
-                        </section>
-
-                        <section class="admin-editor__section" aria-label="余额调整">
-                          <p class="admin-editor__title">余额调整</p>
-                          <p class="admin-editor__help">
-                            当前余额 {{ user.balanceLabel }}；扣减金额不能超过可用余额。
-                          </p>
-                          <form
-                            class="admin-editor__grid"
-                            novalidate
-                            @submit.prevent="adjustWallet(user)"
-                          >
-                            <div class="admin-editor__field">
-                              <label class="admin-editor__label" for="wallet-direction">
-                                方向
-                              </label>
-                              <select
-                                id="wallet-direction"
-                                v-model="walletDirection"
-                                class="admin-select"
-                                :disabled="adjustingWallet"
-                              >
-                                <option value="credit">增加余额</option>
-                                <option value="debit">扣减余额</option>
-                              </select>
-                            </div>
-                            <UiInput
-                              v-model="walletAmountYuan"
-                              label="金额 / 元"
-                              name="wallet-amount"
-                              inputmode="decimal"
-                              placeholder="100.00"
-                              :error="walletErrors.amount"
-                              :disabled="adjustingWallet"
-                            />
-                            <UiInput
-                              v-model="walletNote"
-                              label="备注"
-                              name="wallet-note"
-                              placeholder="例如：活动奖励 / 退款补偿"
-                              :maxlength="120"
-                              :error="walletErrors.note"
-                              :disabled="adjustingWallet"
-                            />
-                            <div class="admin-editor__actions admin-editor__actions--inline">
-                              <UiButton type="submit" size="sm" :loading="adjustingWallet">
-                                提交调整
-                              </UiButton>
-                            </div>
-                          </form>
-                        </section>
                       </div>
                     </td>
                   </tr>
@@ -544,6 +463,110 @@ onMounted(async () => {
           </div>
         </template>
       </section>
+
+      <UiDrawer v-model="editorOpen" :title="editorTitle" size="md">
+        <template v-if="editingUser">
+          <section class="admin-editor__section" aria-label="用户资料">
+            <p class="admin-editor__title">用户资料</p>
+
+            <UiAlert
+              v-if="profileSubmitError"
+              variant="error"
+              title="保存失败"
+              dismissible
+              @close="profileSubmitError = ''"
+            >
+              {{ profileSubmitError }}
+            </UiAlert>
+
+            <div class="admin-editor__grid">
+              <UiInput
+                v-model="nickname"
+                label="昵称"
+                name="edit-nickname"
+                :maxlength="64"
+                :error="profileErrors.nickname"
+                :disabled="savingProfile"
+              />
+              <UiInput
+                v-model="email"
+                label="邮箱"
+                name="edit-email"
+                type="email"
+                :maxlength="320"
+                :error="profileErrors.email"
+                :disabled="savingProfile"
+              />
+            </div>
+            <p class="admin-editor__help">
+              昵称会展示在订单与申请中；实名、企业、工程师认证由认证审核授予。
+            </p>
+            <div class="admin-editor__actions">
+              <UiButton :loading="savingProfile" @click="saveProfile">保存资料</UiButton>
+              <UiButton variant="ghost" :disabled="savingProfile" @click="closeEditor">
+                取消
+              </UiButton>
+            </div>
+          </section>
+
+          <section class="admin-editor__section" aria-label="余额调整">
+            <p class="admin-editor__title">余额调整</p>
+            <p class="admin-editor__help">
+              当前余额 {{ editingUser.balanceLabel }}；扣减金额不能超过可用余额。
+            </p>
+
+            <UiAlert
+              v-if="walletErrors.submit"
+              variant="error"
+              title="调整失败"
+              dismissible
+              @close="walletErrors.submit = undefined"
+            >
+              {{ walletErrors.submit }}
+            </UiAlert>
+
+            <form class="admin-editor__grid" novalidate @submit.prevent="adjustWallet">
+              <div class="admin-editor__field">
+                <label class="admin-editor__label" for="wallet-direction">方向</label>
+                <select
+                  id="wallet-direction"
+                  v-model="walletDirection"
+                  class="admin-select"
+                  :disabled="adjustingWallet"
+                >
+                  <option value="credit">增加余额</option>
+                  <option value="debit">扣减余额</option>
+                </select>
+              </div>
+              <UiInput
+                v-model="walletAmountYuan"
+                label="金额 / 元"
+                name="wallet-amount"
+                inputmode="decimal"
+                placeholder="100.00"
+                :error="walletErrors.amount"
+                :disabled="adjustingWallet"
+              />
+              <UiInput
+                v-model="walletNote"
+                label="备注"
+                name="wallet-note"
+                placeholder="例如：活动奖励 / 退款补偿"
+                :maxlength="120"
+                :error="walletErrors.note"
+                :disabled="adjustingWallet"
+              />
+              <div class="admin-editor__actions">
+                <UiButton type="submit" :loading="adjustingWallet">提交调整</UiButton>
+              </div>
+            </form>
+          </section>
+        </template>
+
+        <template #footer>
+          <UiButton variant="secondary" @click="closeEditor">关闭</UiButton>
+        </template>
+      </UiDrawer>
     </div>
   </ConsoleLayout>
 </template>
@@ -729,17 +752,6 @@ onMounted(async () => {
   gap: var(--primitive-space-1);
 }
 
-.admin-table__row--editor {
-  background-color: var(--color-bg-subtle);
-}
-
-.admin-editor {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--primitive-space-6);
-  padding: var(--primitive-space-3) var(--primitive-space-2);
-}
-
 .admin-editor__section {
   display: flex;
   flex-direction: column;
@@ -754,7 +766,7 @@ onMounted(async () => {
 
 .admin-editor__grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--primitive-space-3);
 }
 
@@ -785,10 +797,6 @@ onMounted(async () => {
   gap: var(--primitive-space-2);
 }
 
-.admin-editor__actions--inline {
-  align-self: end;
-}
-
 .admin-empty {
   padding: var(--primitive-space-10) var(--primitive-space-6);
   color: var(--color-fg-muted);
@@ -814,17 +822,5 @@ onMounted(async () => {
 .admin-pagination__actions {
   display: flex;
   gap: var(--primitive-space-2);
-}
-
-@media (max-width: 1024px) {
-  .admin-editor {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-@media (max-width: 640px) {
-  .admin-editor__grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 </style>

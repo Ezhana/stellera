@@ -110,6 +110,7 @@ async function mountPage(): Promise<MountResult> {
       { path: '/intro', name: 'intro', component: EmptyView },
       { path: '/fde/hall', name: 'fde-hall', component: EmptyView },
       { path: '/fde/published', name: 'fde-published', component: EmptyView },
+      { path: '/fde/publish', name: 'fde-publish', component: EmptyView },
       { path: '/fde/assigned', name: 'fde-assigned', component: EmptyView },
       { path: '/fde/applications', name: 'fde-applications', component: EmptyView },
       { path: '/wallet', name: 'wallet', component: EmptyView },
@@ -121,29 +122,6 @@ async function mountPage(): Promise<MountResult> {
   const wrapper = mount(PublishedOrdersPage, { global: { plugins: [pinia, router] } })
   await flushPromises()
   return { wrapper, router }
-}
-
-async function openForm(wrapper: VueWrapper): Promise<void> {
-  const toggle = wrapper.findAll('button').find((button) => button.text() === '发布需求')
-  await toggle?.trigger('click')
-  await flushPromises()
-}
-
-async function fillForm(
-  wrapper: VueWrapper,
-  values: {
-    title: string
-    industry: string
-    deliveryDays: string
-    priceYuan: string
-    description: string
-  },
-): Promise<void> {
-  await wrapper.find('input[name="title"]').setValue(values.title)
-  await wrapper.find('#publish-industry').setValue(values.industry)
-  await wrapper.find('input[name="deliveryDays"]').setValue(values.deliveryDays)
-  await wrapper.find('input[name="priceYuan"]').setValue(values.priceYuan)
-  await wrapper.find('textarea').setValue(values.description)
 }
 
 function findButton(wrapper: VueWrapper, label: string) {
@@ -165,7 +143,7 @@ describe('PublishedOrdersPage', () => {
     vi.mocked(ordersBff.listReceivedApplications).mockResolvedValue(buildApplicationListModel([]))
   })
 
-  it('lists my orders and opens the inline publish form for every signed-in user', async () => {
+  it('lists my orders and links to the standalone publish page', async () => {
     vi.mocked(ordersBff.listMyOrders).mockResolvedValue(listModel([myOrder]))
     const { wrapper } = await mountPage()
 
@@ -177,79 +155,21 @@ describe('PublishedOrdersPage', () => {
     expect(wrapper.findAll('tbody tr')).toHaveLength(1)
     expect(wrapper.text()).toContain('医疗影像数据标注与质检')
     expect(wrapper.text()).toContain('我的订单')
-    expect(wrapper.text()).not.toContain('无发布权限')
-
-    await openForm(wrapper)
-
-    expect(wrapper.find('form').exists()).toBe(true)
-    expect(wrapper.text()).toContain('发布新需求')
-  })
-
-  it('validates the inline form with Chinese messages before calling the BFF', async () => {
-    vi.mocked(ordersBff.listMyOrders).mockResolvedValue(listModel([myOrder]))
-    const { wrapper } = await mountPage()
-    await openForm(wrapper)
-
-    await wrapper.find('form').trigger('submit')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('请输入任务标题')
-    expect(wrapper.text()).toContain('请选择行业')
-    expect(wrapper.text()).toContain('请输入交付周期')
-    expect(wrapper.text()).toContain('请输入预算金额')
-    expect(wrapper.text()).toContain('请填写需求描述')
-    expect(ordersBff.createOrder).not.toHaveBeenCalled()
-
-    await fillForm(wrapper, {
-      title: '新能源调度算法交付',
-      industry: '能源电力',
-      deliveryDays: '0',
-      priceYuan: '0',
-      description: '交付一套调度算法与验收报告。',
-    })
-    await wrapper.find('form').trigger('submit')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('交付周期需在 1–365 天之间')
-    expect(wrapper.text()).toContain('预算金额必须大于 0')
-    expect(ordersBff.createOrder).not.toHaveBeenCalled()
-  })
-
-  it('publishes a demand, converts yuan to cents and prepends the new order', async () => {
-    vi.mocked(ordersBff.listMyOrders).mockResolvedValue(listModel([myOrder]))
-    vi.mocked(ordersBff.createOrder).mockResolvedValue(
-      buildOrderView({
-        id: '12',
-        title: '新能源调度算法交付',
-        industry: '能源电力',
-        publisherId: '7',
-        publisherName: 'Luna',
-        createdAt: '2026-11-02T00:00:00.000Z',
-      }),
-    )
-
-    const { wrapper } = await mountPage()
-    await openForm(wrapper)
-    await fillForm(wrapper, {
-      title: '新能源调度算法交付',
-      industry: '能源电力',
-      deliveryDays: '14',
-      priceYuan: '860.50',
-      description: '交付一套调度算法与验收报告。',
-    })
-    await wrapper.find('form').trigger('submit')
-    await flushPromises()
-
-    expect(ordersBff.createOrder).toHaveBeenCalledWith({
-      title: '新能源调度算法交付',
-      industry: '能源电力',
-      description: '交付一套调度算法与验收报告。',
-      deliveryDays: 14,
-      priceCents: 86_050,
-    })
-    expect(wrapper.text()).toContain('需求已发布并进入订单大厅，资金已进入平台托管。')
-    expect(wrapper.findAll('tbody tr')).toHaveLength(2)
     expect(wrapper.find('form').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('发布新需求')
+
+    const publishLink = wrapper.findAll('a').find((node) => node.text() === '发布需求')
+    expect(publishLink?.attributes('href')).toBe('/fde/publish')
+  })
+
+  it('points the empty state action to the standalone publish page', async () => {
+    vi.mocked(ordersBff.listMyOrders).mockResolvedValue(listModel([]))
+
+    const { wrapper } = await mountPage()
+
+    expect(wrapper.text()).toContain('还没有发布过需求')
+    const link = wrapper.findAll('a').find((node) => node.text() === '发布第一条需求')
+    expect(link?.attributes('href')).toBe('/fde/publish')
   })
 
   it('links the pending accept applications of an open order to the review tab', async () => {

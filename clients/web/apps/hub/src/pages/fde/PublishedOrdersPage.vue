@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
-import { z } from 'zod'
 
 import { BffError } from '@/bff/errors'
 import { ordersBff, summarizeOrders, upsertOrder } from '@/bff/orders'
-import type { CreateOrderInput, OrderRealtimeConnection, OrderRealtimeState } from '@/bff/orders'
+import type { OrderRealtimeConnection, OrderRealtimeState } from '@/bff/orders'
 import PageHeader from '@/components/console/PageHeader.vue'
 import LiveStatus from '@/components/orders/LiveStatus.vue'
 import OrderEmptyState from '@/components/orders/OrderEmptyState.vue'
@@ -14,11 +13,9 @@ import OrderStatusTabs from '@/components/orders/OrderStatusTabs.vue'
 import OrderTable from '@/components/orders/OrderTable.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiButton from '@/components/ui/UiButton.vue'
-import UiCard from '@/components/ui/UiCard.vue'
 import UiIcon from '@/components/ui/UiIcon.vue'
-import UiInput from '@/components/ui/UiInput.vue'
 import ConsoleLayout from '@/layouts/ConsoleLayout.vue'
-import { FDE_INDUSTRIES, type FdeOrderStatus, type FdeOrderView } from '@/models'
+import type { FdeOrderStatus, FdeOrderView } from '@/models'
 import type { OrderApplicationView } from '@/models'
 import { useAuthStore } from '@/stores/auth'
 
@@ -33,6 +30,7 @@ const loading = ref(true)
 const refreshing = ref(false)
 const errorMessage = ref('')
 const actionError = ref('')
+const successMessage = ref('')
 const statusFilter = ref<FdeOrderStatus | 'all'>('all')
 const realtimeState = ref<OrderRealtimeState>('connecting')
 const lastEventLabel = ref('')
@@ -41,58 +39,8 @@ const highlightedId = ref<string | null>(null)
 const confirmingCancelId = ref<string | null>(null)
 const cancellingOrderId = ref<string | null>(null)
 const approvingOrderId = ref<string | null>(null)
-
-const formOpen = ref(false)
-const submitting = ref(false)
-const successMessage = ref('')
-const formError = ref('')
-
-const title = ref('')
-const industry = ref('')
-const deliveryDays = ref('')
-const priceYuan = ref('')
-const description = ref('')
-
-interface FormFieldErrors {
-  title?: string
-  industry?: string
-  deliveryDays?: string
-  priceYuan?: string
-  description?: string
-}
-
-const FORM_FIELDS = ['title', 'industry', 'deliveryDays', 'priceYuan', 'description'] as const
-type FormField = (typeof FORM_FIELDS)[number]
-
-const fieldErrors = reactive<FormFieldErrors>({})
-
 let connection: OrderRealtimeConnection | null = null
 let highlightTimer: ReturnType<typeof setTimeout> | null = null
-
-const publishSchema = z.object({
-  title: z.string().trim().min(1, '请输入任务标题').max(120, '任务标题长度不能超过 120 个字符'),
-  industry: z.string().min(1, '请选择行业'),
-  deliveryDays: z
-    .string()
-    .trim()
-    .min(1, '请输入交付周期')
-    .refine((value) => /^\d+$/.test(value), '交付周期需为整数天数')
-    .transform((value) => Number(value))
-    .refine((value) => value >= 1 && value <= 365, '交付周期需在 1–365 天之间'),
-  priceYuan: z
-    .string()
-    .trim()
-    .min(1, '请输入预算金额')
-    .refine((value) => /^\d+(\.\d{1,2})?$/.test(value), '预算金额最多保留两位小数')
-    .transform((value) => Number(value))
-    .refine((value) => value > 0, '预算金额必须大于 0')
-    .refine((value) => value <= 10_000_000, '预算金额不能超过 10,000,000 元'),
-  description: z
-    .string()
-    .trim()
-    .min(1, '请填写需求描述')
-    .max(4000, '需求描述长度不能超过 4000 个字符'),
-})
 
 const stats = computed(() => summarizeOrders(orders.value))
 const liveHint = computed(() => lastEventLabel.value || '刚刚已同步')
@@ -124,24 +72,15 @@ function pendingApplications(
 }
 
 /** Map the BFF's stable error codes to page copy; the page never inspects HTTP statuses. */
-function toErrorMessage(error: unknown, scope: 'load' | 'publish' | 'action'): string {
-  const fallback =
-    scope === 'load'
-      ? '需求加载失败，请稍后重试。'
-      : scope === 'action'
-        ? '操作失败，请稍后重试。'
-        : '发布失败，请稍后重试。'
+function toErrorMessage(error: unknown, scope: 'load' | 'action'): string {
+  const fallback = scope === 'load' ? '需求加载失败，请稍后重试。' : '操作失败，请稍后重试。'
   if (!(error instanceof BffError)) return fallback
 
   switch (error.code) {
     case 'session-expired':
       return '登录已过期，请重新登录。'
     case 'forbidden':
-      return scope === 'load'
-        ? '当前账号没有查看需求的权限。'
-        : scope === 'action'
-          ? '当前账号没有操作该订单的权限。'
-          : '当前账号没有发布需求的权限，请联系管理员。'
+      return scope === 'load' ? '当前账号没有查看需求的权限。' : '当前账号没有操作该订单的权限。'
     case 'not-found':
       return '订单不存在或已被移除，请刷新后重试。'
     case 'invalid-input':
@@ -190,90 +129,6 @@ async function refresh(): Promise<void> {
     await Promise.all([loadOrders(false), loadReceivedApplications()])
   } finally {
     refreshing.value = false
-  }
-}
-
-function clearFieldErrors(): void {
-  for (const field of FORM_FIELDS) fieldErrors[field] = undefined
-}
-
-/** Validate the inline form and convert yuan into integer cents for the BFF. */
-function parseForm(): CreateOrderInput | null {
-  clearFieldErrors()
-
-  const result = publishSchema.safeParse({
-    title: title.value,
-    industry: industry.value,
-    deliveryDays: deliveryDays.value,
-    priceYuan: priceYuan.value,
-    description: description.value,
-  })
-
-  if (!result.success) {
-    for (const issue of result.error.issues) {
-      const field = issue.path[0]
-      if (typeof field !== 'string' || !(FORM_FIELDS as readonly string[]).includes(field)) continue
-      if (!fieldErrors[field as FormField]) fieldErrors[field as FormField] = issue.message
-    }
-    return null
-  }
-
-  return {
-    title: result.data.title,
-    industry: result.data.industry,
-    description: result.data.description,
-    deliveryDays: result.data.deliveryDays,
-    priceCents: Math.round(result.data.priceYuan * 100),
-  }
-}
-
-function resetForm(): void {
-  title.value = ''
-  industry.value = ''
-  deliveryDays.value = ''
-  priceYuan.value = ''
-  description.value = ''
-  clearFieldErrors()
-}
-
-function openForm(): void {
-  successMessage.value = ''
-  formError.value = ''
-  formOpen.value = true
-}
-
-function closeForm(): void {
-  formOpen.value = false
-  formError.value = ''
-  resetForm()
-}
-
-function toggleForm(): void {
-  if (formOpen.value) closeForm()
-  else openForm()
-}
-
-async function handlePublish(): Promise<void> {
-  if (submitting.value) return
-
-  formError.value = ''
-  successMessage.value = ''
-  const input = parseForm()
-  if (!input) return
-
-  submitting.value = true
-  try {
-    const order = await ordersBff.createOrder(input)
-    orders.value = upsertOrder(orders.value, order)
-    resetForm()
-    formOpen.value = false
-    successMessage.value = '需求已发布并进入订单大厅，资金已进入平台托管。'
-    announcement.value = `已发布需求：${order.title}`
-    highlightRow(order.id)
-  } catch (error) {
-    formError.value = toErrorMessage(error, 'publish')
-  } finally {
-    submitting.value = false
   }
 }
 
@@ -393,9 +248,10 @@ onBeforeUnmount(() => {
             <UiIcon name="arrow-left" :size="16" />
             返回订单大厅
           </RouterLink>
-          <UiButton variant="secondary" @click="toggleForm">
-            {{ formOpen ? '收起表单' : '发布需求' }}
-          </UiButton>
+          <RouterLink class="order-page__link-button" :to="{ name: 'fde-publish' }">
+            <UiIcon name="plus" :size="16" />
+            发布需求
+          </RouterLink>
           <LiveStatus :state="realtimeState" :last-event-label="lastEventLabel || undefined" />
         </template>
       </PageHeader>
@@ -421,96 +277,6 @@ onBeforeUnmount(() => {
       >
         {{ actionError }}
       </UiAlert>
-
-      <UiCard v-if="formOpen" elevated padding="lg" class="publish-form">
-        <header class="publish-form__header">
-          <p class="hub-eyebrow">PUBLISH ORDER</p>
-          <h2 class="publish-form__title">发布新需求</h2>
-          <p class="publish-form__description">
-            需求发布后立即进入订单大厅，预算会进入平台托管，交付完成后结算。
-          </p>
-        </header>
-
-        <UiAlert
-          v-if="formError"
-          variant="error"
-          title="发布失败"
-          dismissible
-          @close="formError = ''"
-        >
-          {{ formError }}
-        </UiAlert>
-
-        <form class="publish-form__grid" novalidate @submit.prevent="handlePublish">
-          <UiInput
-            v-model="title"
-            label="任务标题"
-            name="title"
-            :maxlength="120"
-            placeholder="例如：医疗影像数据标注与质检"
-            :error="fieldErrors.title"
-            :disabled="submitting"
-          />
-
-          <div class="publish-form__field">
-            <label class="publish-form__label" for="publish-industry">行业</label>
-            <select
-              id="publish-industry"
-              v-model="industry"
-              class="publish-form__select"
-              :disabled="submitting"
-            >
-              <option value="" disabled>请选择行业</option>
-              <option v-for="item in FDE_INDUSTRIES" :key="item" :value="item">{{ item }}</option>
-            </select>
-            <p v-if="fieldErrors.industry" class="publish-form__error" role="alert">
-              {{ fieldErrors.industry }}
-            </p>
-          </div>
-
-          <UiInput
-            v-model="deliveryDays"
-            label="交付周期 / 天"
-            name="deliveryDays"
-            inputmode="numeric"
-            placeholder="7"
-            :error="fieldErrors.deliveryDays"
-            :disabled="submitting"
-          />
-
-          <UiInput
-            v-model="priceYuan"
-            label="预算 / 元"
-            name="priceYuan"
-            inputmode="decimal"
-            placeholder="86000"
-            :error="fieldErrors.priceYuan"
-            :disabled="submitting"
-          />
-
-          <div class="publish-form__field publish-form__field--wide">
-            <label class="publish-form__label" for="publish-description">需求描述</label>
-            <textarea
-              id="publish-description"
-              v-model="description"
-              class="publish-form__textarea"
-              rows="5"
-              :maxlength="4000"
-              :disabled="submitting"
-              placeholder="说明目标、交付物与验收标准…"
-            />
-            <p v-if="fieldErrors.description" class="publish-form__error" role="alert">
-              {{ fieldErrors.description }}
-            </p>
-            <p v-else class="publish-form__help">已输入 {{ description.length }} / 4000 字</p>
-          </div>
-
-          <div class="publish-form__actions publish-form__field--wide">
-            <UiButton type="submit" :loading="submitting">发布需求</UiButton>
-            <UiButton variant="ghost" :disabled="submitting" @click="closeForm">取消</UiButton>
-          </div>
-        </form>
-      </UiCard>
 
       <OrderStatsGrid :stats="stats" total-label="我的订单" />
 
@@ -549,7 +315,9 @@ onBeforeUnmount(() => {
           "
         >
           <template #action>
-            <UiButton variant="secondary" @click="openForm">发布第一条需求</UiButton>
+            <RouterLink class="order-page__link-button" :to="{ name: 'fde-publish' }">
+              发布第一条需求
+            </RouterLink>
           </template>
         </OrderEmptyState>
 
@@ -628,134 +396,6 @@ onBeforeUnmount(() => {
   text-decoration: none;
 }
 
-.publish-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--primitive-space-5);
-}
-
-.publish-form__header {
-  display: flex;
-  flex-direction: column;
-  gap: var(--primitive-space-1);
-}
-
-.publish-form__title {
-  color: var(--color-fg-strong);
-  font-size: var(--font-size-h3);
-  font-weight: var(--font-weight-medium);
-}
-
-.publish-form__description {
-  max-width: 60ch;
-  color: var(--color-fg-muted);
-  font-size: var(--font-size-small);
-  line-height: 1.6;
-}
-
-.publish-form__grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--primitive-space-4);
-}
-
-.publish-form__field {
-  display: flex;
-  flex-direction: column;
-}
-
-.publish-form__field--wide {
-  grid-column: 1 / -1;
-}
-
-.publish-form__label {
-  margin-bottom: var(--primitive-space-1);
-  color: var(--color-fg-muted);
-  font-size: var(--font-size-small);
-  font-weight: var(--font-weight-medium);
-  line-height: 1.2;
-}
-
-.publish-form__select {
-  height: 44px;
-  padding: 0 var(--primitive-space-4);
-  color: var(--color-fg);
-  background-color: var(--color-surface-elevated);
-  border: var(--border-width-default) solid var(--obsidian-border-strong);
-  border-radius: var(--radius-control);
-  font-family: var(--font-family-sans);
-  font-size: var(--font-size-small);
-  transition: border-color var(--motion-duration-normal) var(--motion-easing-standard);
-}
-
-.publish-form__select:hover:not(:disabled) {
-  border-color: var(--color-accent-border);
-}
-
-.publish-form__select:focus-visible {
-  border-color: var(--color-accent);
-}
-
-.publish-form__select option {
-  color: var(--color-fg);
-  background-color: var(--color-surface-elevated);
-}
-
-.publish-form__textarea {
-  min-height: 128px;
-  padding: var(--primitive-space-3) var(--primitive-space-4);
-  color: var(--color-fg);
-  background-color: var(--color-surface-elevated);
-  border: var(--border-width-default) solid var(--obsidian-border-strong);
-  border-radius: var(--radius-control);
-  font-family: var(--font-family-sans);
-  font-size: var(--font-size-small);
-  line-height: 1.6;
-  resize: vertical;
-  transition: border-color var(--motion-duration-normal) var(--motion-easing-standard);
-}
-
-.publish-form__textarea::placeholder {
-  color: var(--color-fg-muted);
-}
-
-.publish-form__textarea:hover:not(:disabled) {
-  border-color: var(--color-accent-border);
-}
-
-.publish-form__textarea:focus-visible {
-  border-color: var(--color-accent);
-  outline: 2px solid var(--color-focus-ring);
-  outline-offset: 2px;
-}
-
-.publish-form__textarea:disabled {
-  color: var(--color-fg-muted);
-  background-color: var(--color-bg);
-  cursor: not-allowed;
-}
-
-.publish-form__error {
-  margin-top: var(--primitive-space-1);
-  color: var(--color-danger);
-  font-size: var(--font-size-caption);
-  line-height: var(--font-line-height-caption);
-}
-
-.publish-form__help {
-  margin-top: var(--primitive-space-1);
-  color: var(--color-fg-muted);
-  font-size: var(--font-size-caption);
-  line-height: var(--font-line-height-caption);
-}
-
-.publish-form__actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--primitive-space-3);
-}
-
 .order-page__panel {
   display: flex;
   flex-direction: column;
@@ -828,12 +468,6 @@ onBeforeUnmount(() => {
 @keyframes order-page-spin {
   to {
     transform: rotate(360deg);
-  }
-}
-
-@media (max-width: 760px) {
-  .publish-form__grid {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

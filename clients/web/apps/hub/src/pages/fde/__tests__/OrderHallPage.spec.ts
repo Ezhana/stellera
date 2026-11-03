@@ -118,6 +118,7 @@ async function mountPage(): Promise<MountResult> {
       { path: '/intro', name: 'intro', component: EmptyView },
       { path: '/fde/hall', name: 'fde-hall', component: EmptyView },
       { path: '/fde/published', name: 'fde-published', component: EmptyView },
+      { path: '/fde/publish', name: 'fde-publish', component: EmptyView },
       { path: '/fde/assigned', name: 'fde-assigned', component: EmptyView },
       { path: '/fde/applications', name: 'fde-applications', component: EmptyView },
       { path: '/wallet', name: 'wallet', component: EmptyView },
@@ -126,7 +127,9 @@ async function mountPage(): Promise<MountResult> {
   await router.push('/fde/hall')
   await router.isReady()
 
-  const wrapper = mount(OrderHallPage, { global: { plugins: [pinia, router] } })
+  const wrapper = mount(OrderHallPage, {
+    global: { plugins: [pinia, router], stubs: { teleport: true } },
+  })
   await flushPromises()
   return { wrapper, router }
 }
@@ -208,10 +211,11 @@ describe('OrderHallPage', () => {
     const { wrapper } = await mountPage()
 
     expect(wrapper.text()).toContain('暂无可接订单')
-    expect(wrapper.text()).toContain('前往我发布的')
+    const link = wrapper.findAll('a').find((node) => node.text() === '发布需求')
+    expect(link?.attributes('href')).toBe('/fde/publish')
   })
 
-  it('offers 申请接单 on open orders published by others and submits an accept application', async () => {
+  it('opens the apply modal and submits an accept application with a note', async () => {
     vi.mocked(ordersBff.listOrders).mockResolvedValue(listModel([myOrder, openOrder]))
     vi.mocked(ordersBff.applyForOrder).mockResolvedValue(buildApplicationView())
 
@@ -223,9 +227,45 @@ describe('OrderHallPage', () => {
     await applyButtons[0]!.trigger('click')
     await flushPromises()
 
-    expect(ordersBff.applyForOrder).toHaveBeenCalledWith('2', 'accept')
+    expect(wrapper.text()).toContain('申请接单后需发布者审批')
+    await wrapper.find('textarea[name="apply-message"]').setValue('有医疗行业交付经验')
+    await findButton(wrapper, '确认申请')?.trigger('click')
+    await flushPromises()
+
+    expect(ordersBff.applyForOrder).toHaveBeenCalledWith('2', 'accept', '有医疗行业交付经验')
     expect(wrapper.text()).toContain('申请已提交，等待发布者审批')
+    expect(wrapper.find('textarea[name="apply-message"]').exists()).toBe(false)
     expect(ordersBff.listOrders).toHaveBeenCalledTimes(2)
+  })
+
+  it('closes the apply modal without calling the BFF when cancelled', async () => {
+    vi.mocked(ordersBff.listOrders).mockResolvedValue(listModel([openOrder]))
+
+    const { wrapper } = await mountPage()
+    await findButton(wrapper, '申请接单')?.trigger('click')
+    await flushPromises()
+
+    await findButton(wrapper, '取消')?.trigger('click')
+    await flushPromises()
+
+    expect(ordersBff.applyForOrder).not.toHaveBeenCalled()
+    expect(wrapper.find('textarea[name="apply-message"]').exists()).toBe(false)
+  })
+
+  it('shows a conflict message inside the apply modal when the application is rejected', async () => {
+    vi.mocked(ordersBff.listOrders).mockResolvedValue(listModel([openOrder]))
+    vi.mocked(ordersBff.applyForOrder).mockRejectedValue(
+      new BffError('conflict', '已有待审批的接单申请。'),
+    )
+
+    const { wrapper } = await mountPage()
+    await findButton(wrapper, '申请接单')?.trigger('click')
+    await flushPromises()
+    await findButton(wrapper, '确认申请')?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已有待审批的接单申请。')
+    expect(wrapper.find('textarea[name="apply-message"]').exists()).toBe(true)
   })
 
   it('marks orders with a pending accept application as 已申请', async () => {
@@ -248,19 +288,6 @@ describe('OrderHallPage', () => {
     const disabled = wrapper.findAll('button').find((button) => button.text() === '已申请')
     expect(disabled?.attributes('disabled')).toBeDefined()
     expect(wrapper.findAll('button').some((button) => button.text() === '申请接单')).toBe(false)
-  })
-
-  it('shows a conflict message when the application is rejected', async () => {
-    vi.mocked(ordersBff.listOrders).mockResolvedValue(listModel([openOrder]))
-    vi.mocked(ordersBff.applyForOrder).mockRejectedValue(
-      new BffError('conflict', '已有待审批的接单申请。'),
-    )
-
-    const { wrapper } = await mountPage()
-    await findButton(wrapper, '申请接单')?.trigger('click')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('已有待审批的接单申请。')
   })
 
   it('applies realtime upserts and closes the feed on unmount', async () => {

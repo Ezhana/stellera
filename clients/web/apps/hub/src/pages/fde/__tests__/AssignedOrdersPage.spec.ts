@@ -120,7 +120,9 @@ async function mountPage(): Promise<{ wrapper: VueWrapper; router: Router }> {
   await router.push('/fde/assigned')
   await router.isReady()
 
-  const wrapper = mount(AssignedOrdersPage, { global: { plugins: [pinia, router] } })
+  const wrapper = mount(AssignedOrdersPage, {
+    global: { plugins: [pinia, router], stubs: { teleport: true } },
+  })
   await flushPromises()
   return { wrapper, router }
 }
@@ -180,17 +182,19 @@ describe('AssignedOrdersPage', () => {
     expect(ordersBff.listAssignedOrders).toHaveBeenLastCalledWith({ status: 'in_progress' })
   })
 
-  it('submits a work log with optional hours and refreshes the list', async () => {
+  it('submits a work log from the drawer and refreshes the list', async () => {
     const { wrapper } = await mountPage()
 
     await findButton(wrapper, '提交工作日志')?.trigger('click')
     await flushPromises()
+    expect(wrapper.text()).toContain('提交工作日志')
+    expect(wrapper.text()).toContain('医疗影像数据标注与质检')
 
     await wrapper
       .find('textarea[name="work-log-content"]')
       .setValue('完成首批 200 例标注，已提交质检。')
     await wrapper.find('input[name="work-log-hours"]').setValue('6')
-    await wrapper.find('form').trigger('submit')
+    await findButton(wrapper, '提交日志')?.trigger('click')
     await flushPromises()
 
     expect(ordersBff.addWorkLog).toHaveBeenCalledWith('5', {
@@ -202,12 +206,12 @@ describe('AssignedOrdersPage', () => {
     expect(wrapper.find('textarea[name="work-log-content"]').exists()).toBe(false)
   })
 
-  it('validates the work log content and hours locally', async () => {
+  it('validates the work log content and hours inside the drawer', async () => {
     const { wrapper } = await mountPage()
 
     await findButton(wrapper, '提交工作日志')?.trigger('click')
     await flushPromises()
-    await wrapper.find('form').trigger('submit')
+    await findButton(wrapper, '提交日志')?.trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('请输入工作日志内容')
@@ -215,20 +219,20 @@ describe('AssignedOrdersPage', () => {
 
     await wrapper.find('textarea[name="work-log-content"]').setValue('完成首批标注')
     await wrapper.find('input[name="work-log-hours"]').setValue('30')
-    await wrapper.find('form').trigger('submit')
+    await findButton(wrapper, '提交日志')?.trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('工时需在 0–24 小时之间')
     expect(ordersBff.addWorkLog).not.toHaveBeenCalled()
   })
 
-  it('applies for delivery with an optional message and refreshes applications', async () => {
+  it('applies for delivery from the drawer with an optional message', async () => {
     const { wrapper } = await mountPage()
 
     await findButton(wrapper, '申请交付')?.trigger('click')
     await flushPromises()
     await wrapper.find('textarea[name="delivery-message"]').setValue('已按验收标准交付全部成果。')
-    await wrapper.find('form').trigger('submit')
+    await findButton(wrapper, '提交交付申请')?.trigger('click')
     await flushPromises()
 
     expect(ordersBff.applyForOrder).toHaveBeenCalledWith(
@@ -239,6 +243,7 @@ describe('AssignedOrdersPage', () => {
     expect(wrapper.text()).toContain('交付申请已提交，等待发布者审批。')
     expect(ordersBff.listAssignedOrders).toHaveBeenCalledTimes(2)
     expect(ordersBff.listMyApplications).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('textarea[name="delivery-message"]').exists()).toBe(false)
   })
 
   it('disables the delivery action when a pending delivery application exists', async () => {
