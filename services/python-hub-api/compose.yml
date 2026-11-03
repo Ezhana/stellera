@@ -1,0 +1,78 @@
+# 服务级编排：api + 一次性初始化 job，可独立运行，也可被上层 compose include。
+# 独立运行：docker compose --profile local-db up --build -d
+
+x-build: &service-build
+  context: .
+  args:
+    PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.13-slim}
+    UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:latest}
+    UV_DEFAULT_INDEX: ${UV_DEFAULT_INDEX:-}
+    UV_EXTRA_INDEX_URL: ${UV_EXTRA_INDEX_URL:-}
+    UV_INSECURE_HOST: ${UV_INSECURE_HOST:-}
+
+x-environment: &service-environment
+  APP_ENV: ${APP_ENV:-development}
+  DEBUG: ${DEBUG:-}
+  DOCS_ENABLED: ${DOCS_ENABLED:-true}
+  DATABASE_URL: "postgresql+asyncpg://${DB_USER:-hub}:${DB_PASSWORD:-hub_dev_password}@${DB_HOST:-local-db}:${DB_PORT:-5432}/${DB_NAME:-hub}"
+  JWT_SECRET: ${JWT_SECRET:-local-dev-only-change-me-32-characters-min}
+  JWT_ISSUER: ${JWT_ISSUER:-stellera-hub}
+  JWT_AUDIENCE: ${JWT_AUDIENCE:-stellera-hub-web}
+  ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-900}
+  REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-604800}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080}
+
+x-seed-environment: &seed-environment
+  <<: *service-environment
+  ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+  ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin12345}
+
+services:
+  api:
+    build: *service-build
+    image: "${API_IMAGE:-stellera-hub-api}:${IMAGE_TAG:-local}"
+    environment: *service-environment
+    ports:
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-8000}:${PORT:-8000}"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      local-db:
+        condition: service_healthy
+        required: false
+    restart: unless-stopped
+
+  # 演示数据：docker compose run --rm migrate python -m app.scripts.init --demo
+  migrate:
+    build: *service-build
+    image: "${API_IMAGE:-stellera-hub-api}:${IMAGE_TAG:-local}"
+    command: ["python", "-m", "app.scripts.init"]
+    environment: *seed-environment
+    depends_on:
+      local-db:
+        condition: service_healthy
+        required: false
+    restart: "no"
+
+  local-db:
+    profiles: ["local-db"]
+    image: ${POSTGRES_IMAGE:-postgres:18}
+    environment:
+      POSTGRES_USER: ${DB_USER:-hub}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-hub_dev_password}
+      POSTGRES_DB: ${DB_NAME:-hub}
+    ports:
+      - "${DB_HOST_PORT:-5432}:5432"
+    volumes:
+      # PostgreSQL 18 的 PGDATA 在 /var/lib/postgresql/18/docker，需挂载父目录。
+      - local-pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  local-pgdata:

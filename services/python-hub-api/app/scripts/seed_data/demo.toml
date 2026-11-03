@@ -1,0 +1,195 @@
+# FDE 演示数据：仅当 init / seed 带 --demo 时写入。
+# 时间字段是相对“当前时间”的天数偏移，保证反复执行时顺序与结果稳定。
+
+[[users]]
+username = "operator"
+email = "operator@example.com"
+password = "operator12345"
+full_name = "运营（演示）"
+role = "operator"
+
+[[users]]
+username = "viewer"
+email = "viewer@example.com"
+password = "viewer12345"
+full_name = "访客（演示）"
+role = "viewer"
+
+[[users]]
+username = "enterprise"
+email = "enterprise@example.com"
+password = "enterprise12345"
+full_name = "企业（演示）"
+role = "enterprise"
+
+[[users]]
+username = "engineer"
+email = "engineer@example.com"
+password = "engineer12345"
+full_name = "工程师（演示）"
+role = "engineer"
+
+# 订单大厅首屏数据：5 条 open、3 条 in_progress、2 条 completed，
+# 行业覆盖 7 个方向，发布时间/预算/交付周期都拉开差距，方便前端演示排序与筛选。
+
+[[orders]]
+code = "FDE-DEMO-0001"
+title = "医疗影像 AI 辅助诊断 PoC"
+industry = "医疗健康"
+description = "基于胸部 CT 影像构建肺结节检出模型，输出辅助诊断报告并接入院内 PACS。"
+delivery_days = 21
+price_cents = 8_600_000
+status = "open"
+created_days_ago = 60
+
+[[orders]]
+code = "FDE-DEMO-0002"
+title = "保险理赔单证 OCR 识别流水线"
+industry = "金融保险"
+description = "对理赔材料做分类与关键字段抽取，对接现有理赔系统，识别准确率目标 95%。"
+delivery_days = 14
+price_cents = 3_200_000
+status = "open"
+created_days_ago = 52
+
+[[orders]]
+code = "FDE-DEMO-0003"
+title = "产线设备预测性维护看板"
+industry = "智能制造"
+description = "采集 CNC 设备振动与温度数据，构建剩余寿命预测模型并交付可视化看板。"
+delivery_days = 30
+price_cents = 12_500_000
+status = "open"
+created_days_ago = 45
+
+[[orders]]
+code = "FDE-DEMO-0004"
+title = "光伏电站发电量预测模型"
+industry = "能源电力"
+description = "融合气象预报与历史发电数据，按 15 分钟粒度预测未来 72 小时发电量。"
+delivery_days = 45
+price_cents = 18_000_000
+status = "open"
+created_days_ago = 38
+
+[[orders]]
+code = "FDE-DEMO-0005"
+title = "会员复购推荐引擎冷启动"
+industry = "零售消费"
+description = "在缺少用户行为数据的前提下，用商品画像与人群标签做复购推荐冷启动。"
+delivery_days = 18
+price_cents = 5_800_000
+status = "open"
+created_days_ago = 30
+
+[[orders]]
+code = "FDE-DEMO-0006"
+title = "高校科研数据标注与质检平台"
+industry = "教育科研"
+description = "搭建多模态科研数据标注平台，支持标注任务分发、质检抽检与统计报表。"
+delivery_days = 25
+price_cents = 7_400_000
+status = "in_progress"
+created_days_ago = 24
+claimed_days_ago = 20
+
+[[orders.logs]]
+content = "完成标注任务模型设计与数据字典梳理，输出字段说明文档。"
+worked_hours = 6.0
+days_ago = 18
+
+[[orders.logs]]
+content = "交付第一版标注与质检流程原型，等待业务方评审。"
+worked_hours = 5.5
+days_ago = 9
+
+[[orders]]
+code = "FDE-DEMO-0007"
+title = "政务热线工单智能分派"
+industry = "政务公共服务"
+description = "对 12345 热线工单做意图识别与属地分派，缩短转办链路并统计办理时效。"
+delivery_days = 35
+price_cents = 9_900_000
+status = "in_progress"
+created_days_ago = 18
+claimed_days_ago = 15
+
+[[orders.logs]]
+content = "梳理 32 类工单标签体系，完成 3 个月历史工单清洗。"
+worked_hours = 7.0
+days_ago = 13
+
+[[orders.logs]]
+content = "训练意图分类基线模型，准确率 88.6%，已提交评估报告。"
+worked_hours = 8.0
+days_ago = 8
+
+[[orders.logs]]
+content = "联调分派规则引擎，补充属地兜底策略。"
+worked_hours = 6.5
+days_ago = 3
+
+[[orders]]
+code = "FDE-DEMO-0008"
+title = "电子病历数据结构化抽取"
+industry = "医疗健康"
+description = "从自由文本电子病历中抽取诊断、用药与手术信息，输出结构化 JSON 接口。"
+delivery_days = 20
+price_cents = 6_600_000
+status = "in_progress"
+created_days_ago = 12
+claimed_days_ago = 10
+
+[[orders.logs]]
+content = "完成脱敏样本集构建与抽取字段确认，进入模型微调阶段。"
+worked_hours = 4.0
+days_ago = 6
+
+[[orders]]
+code = "FDE-DEMO-0009"
+title = "工业质检缺陷检测模型交付"
+industry = "智能制造"
+description = "面向 3C 结构件外观质检，交付缺陷检测模型与边缘推理服务部署方案。"
+delivery_days = 28
+price_cents = 11_200_000
+status = "completed"
+created_days_ago = 90
+claimed_days_ago = 85
+completed_days_ago = 60
+
+[[orders.logs]]
+content = "完成缺陷样本标注规范与基线模型，漏检率 1.8%。"
+worked_hours = 7.5
+days_ago = 80
+
+[[orders.logs]]
+content = "现场部署边缘推理服务并通过产线验收，交付运维手册。"
+worked_hours = 9.0
+days_ago = 65
+
+[[orders]]
+code = "FDE-DEMO-0010"
+title = "信贷反欺诈规则引擎 PoC"
+industry = "金融保险"
+description = "基于历史进件数据构建反欺诈规则与评分卡，输出可解释的拒贷原因。"
+delivery_days = 16
+price_cents = 4_500_000
+status = "completed"
+created_days_ago = 75
+claimed_days_ago = 70
+completed_days_ago = 55
+
+[[orders.logs]]
+content = "完成特征工程与规则挖掘，覆盖 12 类高风险团伙特征。"
+worked_hours = 6.0
+days_ago = 66
+
+[[orders.logs]]
+content = "上线灰度评分卡，欺诈拦截率提升 23%。"
+worked_hours = 5.5
+days_ago = 60
+
+[[orders.logs]]
+content = "整理 PoC 结项报告与规则维护说明，交付验收。"
+worked_hours = 4.0
+days_ago = 57

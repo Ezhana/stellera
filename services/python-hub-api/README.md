@@ -34,13 +34,15 @@ services/python-hub-api/
 │   ├── middleware/             # JWTAuthBackend + CasbinRBACMiddleware
 │   ├── services/               # auth.py（登录/刷新/me）、fde.py（订单状态机与托管资金）
 │   ├── api/v1/endpoints/       # auth.py、fde.py（含 WebSocket）、health.py
-│   └── scripts/seed.py         # 幂等种子数据（角色/权限/演示账号/FDE 演示订单）
+│   ├── scripts/init.py         # 初始化 job：Alembic 迁移 + 种子（--demo 含演示数据）
+│   ├── scripts/seed.py         # TOML fixture 加载 + 幂等写入
+│   └── scripts/seed_data/      # rbac.toml（角色/权限）、demo.toml（演示账号/订单）
 ├── casbin/model.conf           # 只放模型，policy 不落 CSV
 ├── migrations/                 # Alembic（异步 env.py + 0001 初始迁移 + 0002 FDE 订单）
-├── scripts/entrypoint.sh       # 容器入口：serve/migrate/seed/smoke 子命令
+├── compose.yml                 # 服务级编排：api + migrate job（可被上层 compose include）
 ├── tests/                      # SQLite + TestClient，不依赖 Docker/PG
 ├── alembic.ini
-└── Dockerfile                  # python:3.13-slim + uv + 非 root
+└── Dockerfile                  # 仅构建运行镜像（python:3.13-slim + uv）
 ```
 
 ## 快速开始（本地）
@@ -51,48 +53,43 @@ services/python-hub-api/
 cd services/python-hub-api
 cp .env.example .env          # 按需修改 DATABASE_URL / JWT_SECRET
 uv sync
-uv run alembic upgrade head
-uv run python -m app.scripts.seed
+uv run python -m app.scripts.init --demo   # 迁移 + RBAC/管理员 + 演示数据
 uv run fastapi dev            # 自动发现 app/main.py，http://127.0.0.1:8000
 ```
 
-只起数据库再本地跑后端（需要 Docker）：
+只起数据库再本地跑后端（需要 Docker，使用 compose 里可选的本地 PostgreSQL）：
 
 ```bash
-docker compose -f ../../infra/compose.yaml up -d db
+docker compose --profile local-db up -d local-db
 ```
 
 - Swagger：<http://127.0.0.1:8000/docs>
 - 就绪探针：<http://127.0.0.1:8000/health/ready>
 
-默认账号（来自 `.env.example`，仅供本机开发）：`admin / admin12345`；
-`SEED_DEMO_USERS=true` 时额外创建 `operator / operator12345`、`viewer / viewer12345`、
+管理员账号来自 `.env.example` 的 `ADMIN_*`（`admin / admin12345`，仅供本机开发）；
+带 `--demo` 时会额外创建 `operator / operator12345`、`viewer / viewer12345`、
 `enterprise / enterprise12345`（企业（演示））与 `engineer / engineer12345`（工程师（演示）），
 并写入 10 条 FDE 演示订单（`FDE-DEMO-0001` … `FDE-DEMO-0010`）。
 
 ## 配置
 
-所有配置经 `app/core/config.py` 的 `Settings` 读取，变量名与
-`infra/compose.yaml`、`.env.example` 一致；配置在启动时由 Pydantic Settings 校验，
-不合规直接 fail-fast（例如非 development 环境仍使用示例 `JWT_SECRET`）。
+所有运行时配置经 `app/core/config.py` 的 `Settings` 读取，变量名与 `.env.example`、
+`compose.yml` 一致；初始化 job 的 `ADMIN_*` 由 `app/scripts/seed.py` 自己的配置读取。
+配置不做启动期安全校验，生产环境由部署层负责覆盖示例值。
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `APP_ENV` | `development` | `development/test/staging/production` |
-| `DEBUG` | `false` | 调试开关（SQL echo 用 `DATABASE_ECHO`） |
+| `DEBUG` | 空 | 调试子开关，逗号分隔；目前支持 `db_echo`（打印 SQL） |
 | `DOCS_ENABLED` | `true` | 关闭后 `/docs`、`/redoc`、`/openapi.json` 不再挂载 |
 | `DATABASE_URL` | `postgresql+asyncpg://hub:hub_dev_password@localhost:5432/hub` | async SQLAlchemy URL；测试用 `sqlite+aiosqlite:///...` |
-| `DATABASE_ECHO` | `false` | 打印 SQL |
-| `JWT_SECRET` | 示例值 | **至少 32 字符**；非 development 环境拒绝示例值 |
+| `JWT_SECRET` | 开发示例值 | 生产环境必须覆盖 |
 | `JWT_ISSUER` / `JWT_AUDIENCE` | `stellera-hub` / `stellera-hub-web` | JWT iss/aud 校验 |
 | `ACCESS_TOKEN_TTL_SECONDS` | `900` | access token 有效期 |
 | `REFRESH_TOKEN_TTL_SECONDS` | `604800` | refresh token 有效期 |
 | `CORS_ORIGINS` | 本机 5173/8080 | 逗号分隔 |
 | `CASBIN_MODEL_PATH` | `casbin/model.conf` | Casbin 模型文件 |
-| `SEED_ADMIN_USERNAME` / `SEED_ADMIN_PASSWORD` / `SEED_ADMIN_EMAIL` | `admin` / `admin12345` / `admin@example.com` | 管理员 |
-| `SEED_DEMO_USERS` | `true` | 是否创建 operator/viewer/enterprise/engineer 演示账号与 FDE 演示订单 |
-| `SEED_OPERATOR_PASSWORD` / `SEED_VIEWER_PASSWORD` | `operator12345` / `viewer12345` | 运营/访客演示账号密码 |
-| `SEED_ENTERPRISE_PASSWORD` / `SEED_ENGINEER_PASSWORD` | `enterprise12345` / `engineer12345` | 企业/工程师演示账号密码 |
+| `ADMIN_USERNAME` / `ADMIN_EMAIL` / `ADMIN_PASSWORD` | `admin` / `admin@example.com` / `admin12345` | 初始化 job 创建的系统超级管理员；生产必须更换密码 |
 
 ## API
 
@@ -169,7 +166,7 @@ escrow: held --complete--> released / --cancel--> refunded
 - 列表响应统一信封 `{items, total, page, page_size}`，按 `created_at desc, id desc` 排序；
   `status` 只接受 `open/in_progress/completed/cancelled`，`page_size` 范围 1..100；
 - 单号格式 `FDE-<年份>-<4 位序号>`；演示订单固定为 `FDE-DEMO-0001` … `FDE-DEMO-0010`，
-  由 `SEED_DEMO_USERS=true` 时幂等写入（5 条 open、3 条 in_progress、2 条 completed，含 11 条工作日志）；
+  由 `init --demo` 时幂等写入（5 条 open、3 条 in_progress、2 条 completed，含 11 条工作日志）；
 - 业务错误：订单不存在 → 404；状态机不允许（已认领 / 状态不符 / 认领自己发布的订单）→ 409；
   已认证但非发布者 / 非接单工程师 → 403；
 - 时间统一以 UTC 序列化为 RFC 3339（例如 `2026-11-01T06:20:00Z`）；
@@ -248,6 +245,11 @@ uv run alembic downgrade -1        # 回滚一步
 uv run alembic revision -m "msg"   # 新建迁移
 ```
 
+容器与发布环境统一走一次性初始化 job：`python -m app.scripts.init`
+（先 `alembic upgrade head`，再幂等写入种子），与手动命令等价。
+种子数据来自 `app/scripts/seed_data/`：`rbac.toml`（角色/权限，始终应用）与
+`demo.toml`（演示账号/FDE 订单，仅 `--demo` 时应用）。
+
 模型在 `app/models/`，初始迁移为 `migrations/versions/0001_initial_schema.py`，
 FDE 订单表在 `migrations/versions/0002_fde_orders.py`（`fde_orders` + `fde_order_logs`，
 FK 指向 `users`，单号唯一，`status` / `publisher_id` / `created_at` 建索引）。
@@ -282,42 +284,48 @@ just backend-serve
 
 ## Docker
 
+镜像只负责运行 API：uv 安装依赖、`fastapi run` 启动，不含迁移/种子逻辑。
+数据库初始化是独立的一次性 job，二者共用同一镜像：
+
 ```bash
 docker build -t stellera-hub-api .
+# 初始化/迁移（幂等）：DATABASE_URL 需指向容器可达的数据库；追加 --demo 写入演示数据
+docker run --rm --env-file .env stellera-hub-api python -m app.scripts.init
+# 启动 API；PORT / WEB_CONCURRENCY 可覆盖默认 8000 / 1
 docker run --rm -p 8000:8000 --env-file .env stellera-hub-api
 ```
 
-镜像基于 `python:3.13-slim`，用 uv 安装依赖，非 root（uid 10001）运行。
-`scripts/entrypoint.sh` 支持 `serve`（默认：先 `alembic upgrade head`、再幂等 seed，最后
-exec `fastapi run --host 0.0.0.0 --port 8000`，CLI 自动发现 `app/main.py` 里的 app）、
-`migrate`（只跑迁移）、`seed`（只写种子）与 `smoke`（冒烟检查）子命令，其余参数透传执行；
-一次性任务复用同一镜像，例如 `docker compose run --rm migrate` / `--rm seed` / `--rm smoke`。
-
-如果 Docker Hub / ghcr.io 不可直连，可通过 build arg 指定镜像代理（默认仍是官方 tag；
-`UV_IMAGE` 默认跟随 `latest`，需要完全可复现的构建时可覆盖成具体版本）：
+`compose.yml` 是不依赖顶层编排的最小运行单元：`migrate` job 成功退出后 `api` 才启动，
+本地 PostgreSQL 放在可选 profile 里，因此可以独立起全栈：
 
 ```bash
-docker build --build-arg PYTHON_IMAGE=registry.example.com/python:3.13-slim \
-  --build-arg UV_IMAGE=registry.example.com/astral-sh/uv:latest .
+cp .env.example .env
+docker compose --profile local-db up --build -d
+docker compose down -v        # 连本地库数据一起清掉
+
+# 需要演示账号/订单时（本地/测试环境）
+docker compose run --rm migrate python -m app.scripts.init --demo
 ```
 
-内网 pip 源同样通过 build arg 配置（留空使用官方 PyPI；镜像内的 uv 会将其映射为
-`UV_DEFAULT_INDEX` / `UV_EXTRA_INDEX_URL` / `UV_INSECURE_HOST`）：
+该文件不声明项目名，只包含 `api` / `migrate` / `local-db`，可被上层 compose `include`；
+上层通过环境变量注入实际数据库与密钥（`DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` /
+`DB_NAME` / `JWT_SECRET` / `ADMIN_*` 等，见 `.env.example`）。
+
+内网镜像代理与 uv 索引通过 build arg 传入（留空使用官方地址；配置索引时构建会先按镜像源
+重写锁文件——仅镜像内——再 `--locked` 安装，否则源地址不一致会校验失败）：
 
 ```bash
 docker build \
-  --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
-  --build-arg PIP_EXTRA_INDEX_URL=https://mirrors.example.com/simple \
-  --build-arg PIP_TRUSTED_HOST=mirrors.example.com .
+  --build-arg PYTHON_IMAGE=registry.example.com/python:3.13-slim \
+  --build-arg UV_IMAGE=registry.example.com/astral-sh/uv:latest \
+  --build-arg UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple .
 ```
-
-本地全栈（PostgreSQL + API + nginx 前端）见 `infra/compose.yaml`；该文件会把
-`PYTHON_IMAGE` / `UV_IMAGE` / `PIP_*` 作为 build arg 传进来。
 
 ## 与仓库其他部分的关系
 
 - 前端在 `clients/web`，通过 `/api/v1/auth/*`、`/api/v1/fde/*`（含 `/api/v1/fde/ws` 实时推送）
   与 `/health/ready` 对接；
-- `infra/` 负责本地 Docker 编排，`deploy/` 负责发布环境；
+- `infra/` 负责基础设施编排；本服务的 `compose.yml` 可被上层 compose `include`，
+  迁移/初始化命令统一为 `python -m app.scripts.init`；
 - CI 直接在本服务目录跑原生命令：`uv run ruff check .`、`uv run ruff format --check .`、
   `uv run ty check app tests`、`uv run pytest` 和 `uv build`，不依赖根目录工具链。

@@ -1,0 +1,94 @@
+# RBAC 基线数据：每次 init / seed 都会应用（幂等）。
+# roles 的 parent 可省略，表示根角色。
+
+[[roles]]
+name = "authenticated"
+description = "所有已登录用户的基线角色"
+
+[[roles]]
+name = "viewer"
+parent = "authenticated"
+description = "只读访问"
+
+[[roles]]
+name = "operator"
+parent = "viewer"
+description = "运营写操作"
+
+[[roles]]
+name = "admin"
+parent = "operator"
+description = "全部权限"
+
+[[roles]]
+name = "enterprise"
+parent = "authenticated"
+description = "企业发布方：发布需求 / 确认交付 / 取消订单"
+
+[[roles]]
+name = "engineer"
+parent = "authenticated"
+description = "接单工程师：认领订单 / 提交工作日志"
+
+# 只保留当前上线的模块（auth + FDE 订单）；wallet / plaza / 旧 orders 已下线，
+# 不再写入权限表，避免前端权限卡片出现不存在的模块。
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/auth/me"
+action = "^GET$"
+description = "读取当前用户"
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/auth/logout"
+action = "^POST$"
+description = "登出并吊销 refresh token"
+
+[[permissions]]
+role = "admin"
+object = "/api/v1/*"
+action = "^(GET|POST|PUT|PATCH|DELETE)$"
+description = "全部业务 API 权限"
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/fde/orders"
+action = "^GET$"
+description = "只读：FDE 订单大厅"
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/fde/orders/*"
+action = "^GET$"
+description = "只读：FDE 订单详情 / 我发布的"
+
+[[permissions]]
+role = "enterprise"
+object = "/api/v1/fde/orders"
+action = "^POST$"
+description = "企业：发布 FDE 需求"
+
+[[permissions]]
+role = "enterprise"
+object = "/api/v1/fde/orders/*/complete"
+action = "^POST$"
+description = "企业：确认交付并释放托管资金"
+
+[[permissions]]
+role = "enterprise"
+object = "/api/v1/fde/orders/*/cancel"
+action = "^POST$"
+description = "企业：取消订单并退回托管资金"
+
+[[permissions]]
+role = "engineer"
+object = "/api/v1/fde/orders/*/claim"
+action = "^POST$"
+description = "工程师：认领订单"
+
+[[permissions]]
+role = "engineer"
+object = "/api/v1/fde/orders/*/logs"
+action = "^POST$"
+description = "工程师：提交工作日志"

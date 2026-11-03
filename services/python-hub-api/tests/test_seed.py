@@ -13,18 +13,22 @@ from app.db import create_all_tables, create_engine, create_session_factory
 from app.models.fde import FdeOrder, FdeOrderLog
 from app.models.rbac import Permission, Role, UserRole
 from app.models.user import User
-from app.scripts.seed import DEMO_ORDER_DEFINITIONS, ROLE_DEFINITIONS, seed_database
-from tests.conftest import build_test_settings
+from app.scripts.seed import load_demo, load_rbac, seed_database
+from tests.conftest import build_seed_settings, build_test_settings
+
+ROLE_DEFINITIONS, PERMISSION_DEFINITIONS = load_rbac()
+DEMO_USER_DEFINITIONS, DEMO_ORDER_DEFINITIONS = load_demo()
 
 
-def _run_seed(settings: Settings):
+def _run_seed(settings: Settings, *, demo: bool = True):
     async def _run() -> tuple:
         engine = create_engine(settings)
         factory = create_session_factory(engine)
         try:
             await create_all_tables(engine)
-            first = await seed_database(settings, factory)
-            second = await seed_database(settings, factory)
+            seed_settings = build_seed_settings()
+            first = await seed_database(seed_settings, factory, demo=demo)
+            second = await seed_database(seed_settings, factory, demo=demo)
             async with factory() as session:
                 users = (await session.execute(select(func.count()).select_from(User))).scalar_one()
                 roles = (await session.execute(select(func.count()).select_from(Role))).scalar_one()
@@ -52,28 +56,29 @@ def test_seed_is_idempotent(tmp_path: Path) -> None:
 
     first, second, users, roles, permissions, links, orders, logs = _run_seed(settings)
 
-    assert first.created_users == ("admin", "operator", "viewer", "enterprise", "engineer")
+    assert first.created_users == ("admin", *[user.username for user in DEMO_USER_DEFINITIONS])
     assert len(first.created_roles) == len(ROLE_DEFINITIONS) == 6
-    assert first.created_permissions == 10
-    assert first.created_orders == 10
+    assert first.created_permissions == len(PERMISSION_DEFINITIONS) == 10
+    assert first.created_orders == len(DEMO_ORDER_DEFINITIONS) == 10
     # 第二次执行不应重复创建任何东西（含演示订单与工作日志）。
     assert second.created_users == ()
     assert second.created_roles == ()
     assert second.created_permissions == 0
     assert second.created_orders == 0
-    assert users == 5
+    assert users == 1 + len(DEMO_USER_DEFINITIONS)
     assert roles == 6
     assert permissions == 10
-    assert links == 5
+    assert links == 1 + len(DEMO_USER_DEFINITIONS)
     assert orders == 10
     assert logs == 11
 
 
-def test_seed_demo_users_can_be_disabled(tmp_path: Path) -> None:
+def test_seed_without_demo_only_creates_admin(tmp_path: Path) -> None:
     settings = build_test_settings(f"sqlite+aiosqlite:///{tmp_path / 'seed-nodemo.db'}")
-    settings = settings.model_copy(update={"seed_demo_users": False})
 
-    first, _second, users, _roles, _permissions, links, orders, logs = _run_seed(settings)
+    first, _second, users, _roles, _permissions, links, orders, logs = _run_seed(
+        settings, demo=False
+    )
 
     assert first.created_users == ("admin",)
     assert first.created_orders == 0
@@ -91,7 +96,7 @@ def test_role_tree_is_linear_with_fde_roles(tmp_path: Path) -> None:
         factory = create_session_factory(engine)
         try:
             await create_all_tables(engine)
-            await seed_database(settings, factory)
+            await seed_database(build_seed_settings(), factory, demo=True)
             async with factory() as session:
                 rows = (await session.execute(select(Role))).scalars().all()
                 by_id = {role.id: role.name for role in rows}
@@ -121,8 +126,9 @@ def test_demo_orders_are_realistic_and_idempotent(tmp_path: Path) -> None:
         factory = create_session_factory(engine)
         try:
             await create_all_tables(engine)
-            await seed_database(settings, factory)
-            await seed_database(settings, factory)
+            seed_settings = build_seed_settings()
+            await seed_database(seed_settings, factory, demo=True)
+            await seed_database(seed_settings, factory, demo=True)
             async with factory() as session:
                 orders = (
                     (

@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from app.core.config import SERVICE_ROOT, Settings
 from app.db import create_all_tables, create_engine, create_session_factory
 from app.main import create_app
-from app.scripts.seed import seed_database
+from app.scripts.seed import SeedSettings, seed_database
 
 API_V1 = "/api/v1"
 ADMIN_USERNAME = "admin"
@@ -33,7 +33,7 @@ ENGINEER_PASSWORD = "engineer12345"
 def build_test_settings(database_url: str) -> Settings:
     return Settings(
         app_env="test",
-        debug=True,
+        debug=[],
         docs_enabled=True,
         database_url=database_url,
         jwt_secret="test-secret-key-with-at-least-32-characters",
@@ -43,14 +43,15 @@ def build_test_settings(database_url: str) -> Settings:
         refresh_token_ttl_seconds=3600,
         cors_origins=["http://testserver", "http://localhost:5173"],
         casbin_model_path=SERVICE_ROOT / "casbin" / "model.conf",
-        seed_admin_username=ADMIN_USERNAME,
-        seed_admin_password=ADMIN_PASSWORD,
-        seed_admin_email="admin@example.com",
-        seed_demo_users=True,
-        seed_operator_password=OPERATOR_PASSWORD,
-        seed_viewer_password=VIEWER_PASSWORD,
-        seed_enterprise_password=ENTERPRISE_PASSWORD,
-        seed_engineer_password=ENGINEER_PASSWORD,
+    )
+
+
+def build_seed_settings() -> SeedSettings:
+    return SeedSettings(
+        _env_file=None,
+        admin_username=ADMIN_USERNAME,
+        admin_email="admin@example.com",
+        admin_password=ADMIN_PASSWORD,
     )
 
 
@@ -63,7 +64,7 @@ async def prepare_database(settings: Settings) -> None:
     engine = create_engine(settings)
     try:
         await create_all_tables(engine)
-        await seed_database(settings, create_session_factory(engine))
+        await seed_database(build_seed_settings(), create_session_factory(engine), demo=True)
     finally:
         await engine.dispose()
 

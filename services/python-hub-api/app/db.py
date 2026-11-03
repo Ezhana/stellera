@@ -26,7 +26,7 @@ def is_sqlite_url(url: str) -> bool:
 
 def create_engine(settings: Settings) -> AsyncEngine:
     kwargs: dict[str, object] = {
-        "echo": settings.database_echo,
+        "echo": "db_echo" in settings.debug,
         "pool_pre_ping": True,
     }
     if not is_sqlite_url(settings.database_url):

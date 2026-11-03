@@ -2,8 +2,9 @@
 .gitignore
 
 .venv
-__pycache__
-*.pyc
+**/__pycache__
+**/*.pyc
+.uv-cache
 
 .pytest_cache
 .ruff_cache
@@ -12,6 +13,9 @@ __pycache__
 
 .env
 .env.local
+.env.example
+
+compose.yml
 
 dist/
 build/
@@ -22,7 +26,6 @@ htmlcov/
 .coverage
 
 docs/
-scripts/entrypoint.sh.bak
 
 .idea
 .vscode

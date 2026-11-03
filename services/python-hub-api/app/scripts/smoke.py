@@ -1,7 +1,7 @@
 """镜像内冒烟测试：验证「入口 -> web -> api -> 数据库 -> RBAC」整条链路。
 
-只依赖 Python 标准库，由 entrypoint.sh 的 smoke 子命令触发，在 compose 网络内运行：
-    docker compose run --rm smoke
+只依赖 Python 标准库，在能访问入口地址的容器网络内运行：
+    docker compose run --rm --no-deps api python -m app.scripts.smoke
 
 环境变量：
     SMOKE_BASE_URL  入口地址，默认 http://web（compose 服务名）
