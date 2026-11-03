@@ -7,7 +7,13 @@ import UiBrandMark from '@/components/ui/UiBrandMark.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiChip from '@/components/ui/UiChip.vue'
 import UiIcon from '@/components/ui/UiIcon.vue'
-import { CONSOLE_NAV, findNavGroupForRoute, navForViewer, type ViewerProfile } from '@/models'
+import {
+  CONSOLE_NAV,
+  findNavGroupForRoute,
+  navForViewer,
+  type NavLeaf,
+  type ViewerProfile,
+} from '@/models'
 import { useAuthStore } from '@/stores/auth'
 
 interface ConsoleLayoutProps {
@@ -27,6 +33,11 @@ const expandedGroups = ref<Record<string, boolean>>(
 )
 
 const active = computed(() => findNavGroupForRoute(route.name, groups.value))
+
+/** Router target for internal entries; external entries render as plain links instead. */
+function routeTarget(leaf: NavLeaf): { name: string } {
+  return { name: leaf.routeName ?? 'intro' }
+}
 
 /** Keep the group that owns the current route open, even after a manual collapse. */
 watch(
@@ -98,8 +109,22 @@ async function handleLogout(): Promise<void> {
             class="console-layout__nav-list"
           >
             <li v-for="leaf in group.children" :key="leaf.key">
+              <a
+                v-if="leaf.external && leaf.href"
+                :href="leaf.href"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="console-layout__nav-item console-layout__nav-item--external"
+                :aria-label="`${leaf.label}（在新标签页打开）`"
+                :title="`${leaf.label}（新标签页）`"
+              >
+                <UiIcon :name="leaf.icon" :size="17" />
+                <span class="console-layout__nav-label">{{ leaf.label }}</span>
+                <UiIcon class="console-layout__nav-external-icon" name="arrow-right" :size="14" />
+              </a>
               <RouterLink
-                :to="{ name: leaf.routeName }"
+                v-else
+                :to="routeTarget(leaf)"
                 class="console-layout__nav-item"
                 :class="{ 'is-active': active?.leaf.key === leaf.key }"
                 :aria-current="active?.leaf.key === leaf.key ? 'page' : undefined"
@@ -302,6 +327,21 @@ async function handleLogout(): Promise<void> {
 }
 
 .console-layout__nav-item.is-active .ui-icon {
+  color: var(--color-accent-hover);
+}
+
+.console-layout__nav-item--external {
+  cursor: pointer;
+}
+
+.console-layout__nav-external-icon {
+  flex: none;
+  color: var(--obsidian-tertiary-text);
+  transform: rotate(-45deg);
+  transition: color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.console-layout__nav-item--external:hover .console-layout__nav-external-icon {
   color: var(--color-accent-hover);
 }
 

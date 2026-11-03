@@ -1,11 +1,17 @@
+import { MODEL_SQUARE_URL } from '@/config/modelSquare'
+
 import type { IconName } from './icons'
 
-/** A routable navigation entry (second level of the console sidebar). */
+/** A navigation entry (second level of the console sidebar): internal route or external link. */
 export interface NavLeaf {
   key: string
   label: string
   icon: IconName
-  routeName: string
+  /** Vue Router route name for internal entries. */
+  routeName?: string
+  /** Absolute URL for external entries (rendered as a new-tab link). */
+  href?: string
+  external?: boolean
   /** Small right-aligned marker, e.g. the realtime hint on the order hall. */
   meta?: string
 }
@@ -31,7 +37,16 @@ export const CONSOLE_NAV: readonly NavGroup[] = [
     key: 'platform',
     label: '平台',
     icon: 'intro',
-    children: [{ key: 'intro', label: '平台简介', icon: 'intro', routeName: 'intro' }],
+    children: [
+      { key: 'intro', label: '平台简介', icon: 'intro', routeName: 'intro' },
+      {
+        key: 'model-square',
+        label: '模型广场',
+        icon: 'spark',
+        href: MODEL_SQUARE_URL,
+        external: true,
+      },
+    ],
   },
   {
     key: 'account',

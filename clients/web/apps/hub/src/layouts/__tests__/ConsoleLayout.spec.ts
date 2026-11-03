@@ -102,6 +102,7 @@ describe('ConsoleLayout', () => {
     expect(labels).toEqual(
       expect.arrayContaining([
         '平台简介',
+        '模型广场',
         '个人信息',
         '订单大厅实时',
         '我发布的',
@@ -111,6 +112,19 @@ describe('ConsoleLayout', () => {
       ]),
     )
     expect(wrapper.find('[data-test="content"]').text()).toBe('内容')
+  })
+
+  it('renders the model square as a new-tab external link', async () => {
+    const { wrapper } = await mountLayout('/intro')
+
+    const external = wrapper
+      .findAll('a.console-layout__nav-item--external')
+      .find((node) => node.text().includes('模型广场'))
+    expect(external).toBeDefined()
+    expect(external!.attributes('target')).toBe('_blank')
+    expect(external!.attributes('rel')).toContain('noopener')
+    expect(external!.attributes('href')).toMatch(/:3000\/pricing\/?$/)
+    expect(external!.attributes('aria-label')).toContain('新标签页')
   })
 
   it('never renders the admin group for a non-admin viewer', async () => {

@@ -13,6 +13,8 @@ describe('navForViewer', () => {
     expect(groups.some((group) => group.requiresAdmin)).toBe(false)
     expect(groups.flatMap((group) => group.children.map((leaf) => leaf.label))).toEqual(
       expect.arrayContaining([
+        '平台简介',
+        '模型广场',
         '个人信息',
         '订单大厅',
         '我发布的',
@@ -21,6 +23,16 @@ describe('navForViewer', () => {
         '我的钱包',
       ]),
     )
+  })
+
+  it('exposes the platform intro and the external model square entry', () => {
+    const platform = navForViewer({ isAdmin: false }).find((group) => group.key === 'platform')
+
+    expect(platform?.children.map((leaf) => leaf.label)).toEqual(['平台简介', '模型广场'])
+    expect(platform?.children[0]?.routeName).toBe('intro')
+    expect(platform?.children[1]?.external).toBe(true)
+    expect(platform?.children[1]?.href).toMatch(/:3000\/pricing\/?$/)
+    expect(platform?.children[1]?.routeName).toBeUndefined()
   })
 
   it('orders the FDE leaves as hall, published, assigned, applications', () => {
@@ -99,5 +111,9 @@ describe('findNavGroupForRoute', () => {
     expect(findNavGroupForRoute('nope')).toBeNull()
     expect(findNavGroupForRoute(null)).toBeNull()
     expect(findNavGroupForRoute(Symbol('x'))).toBeNull()
+  })
+
+  it('does not treat the external model square as a route', () => {
+    expect(findNavGroupForRoute('model-square')).toBeNull()
   })
 })
