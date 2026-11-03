@@ -26,3 +26,6 @@ export type IconName =
   | 'arrow-right'
   | 'building'
   | 'wrench'
+  | 'wallet'
+  | 'ticket'
+  | 'settings'

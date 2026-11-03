@@ -1,6 +1,8 @@
 # Stellera Hub API（hub-api）
 
 Stellera Hub 的后端服务：**FastAPI + PostgreSQL + Authlib JWT + pycasbin RBAC**。
+除认证、RBAC 与 FDE 订单/实时推送外，还提供钱包（余额、流水、兑换码）与超级管理员后台
+（用户、兑换码、系统设置）；在线充值暂不开放，见 [`docs/adr/0004-wallet-admin.md`](../../docs/adr/0004-wallet-admin.md)。
 
 对应架构决策见 [`docs/adr/0001-auth-rbac.md`](../../docs/adr/0001-auth-rbac.md)：
 不使用 `fastapi-casbin-auth`（它会硬锁旧版 FastAPI/Starlette），而是用 `pycasbin`
@@ -26,19 +28,21 @@ services/hub-api/
 │   ├── main.py                 # create_app 工厂 + lifespan（建引擎、投影 Casbin）
 │   ├── db.py                   # async engine / session factory
 │   ├── core/config.py          # Settings（环境变量唯一入口）
-│   ├── models/                 # users / roles / permissions / refresh_tokens / fde_orders / fde_order_logs
-│   ├── schemas/                # 请求/响应模型（auth.py、fde.py）
+│   ├── models/                 # users / roles / permissions / refresh_tokens / fde_orders / fde_order_logs /
+│   │                           # wallets / wallet_transactions / redeem_codes / system_settings
+│   ├── schemas/                # 请求/响应模型（auth.py、fde.py、wallet.py、admin.py）
 │   ├── security/               # TokenService（Authlib JWT）+ 密码哈希
 │   ├── rbac/                   # Casbin 模型投影、公开策略
 │   ├── realtime/hub.py         # FDE 订单 WebSocket 连接中心（app.state.realtime_hub）
 │   ├── middleware/             # JWTAuthBackend + CasbinRBACMiddleware
-│   ├── services/               # auth.py（登录/刷新/me）、fde.py（订单状态机与托管资金）
-│   ├── api/v1/endpoints/       # auth.py、fde.py（含 WebSocket）、health.py
+│   ├── services/               # auth.py、fde.py（订单状态机 + 钱包扣款/退款/结算）、
+│   │                           # wallet.py（余额/流水/兑换）、admin.py、system_settings.py
+│   ├── api/v1/endpoints/       # auth.py、fde.py（含 WebSocket）、wallet.py、admin.py、health.py
 │   ├── scripts/init.py         # 初始化 job：Alembic 迁移 + 种子（--demo 含演示数据）
 │   ├── scripts/seed.py         # TOML fixture 加载 + 幂等写入
-│   └── scripts/seed_data/      # rbac.toml（角色/权限）、demo.toml（演示账号/订单）
+│   └── scripts/seed_data/      # rbac.toml（角色/权限）、demo.toml（演示账号/订单/钱包/兑换码）
 ├── casbin/model.conf           # 只放模型，policy 不落 CSV
-├── migrations/                 # Alembic（异步 env.py + 0001 初始迁移 + 0002 FDE 订单）
+├── migrations/                 # Alembic（异步 env.py + 0001 初始迁移 + 0002 FDE + 0003 钱包/管理）
 ├── compose.yml                 # 服务级编排：api + migrate job（可被上层 compose include）
 ├── tests/                      # SQLite + TestClient，不依赖 Docker/PG
 ├── alembic.ini
@@ -71,7 +75,9 @@ docker compose --profile local-db up -d local-db
 管理员账号来自 `.env.example` 的 `ADMIN_*`（`admin / admin12345`，仅供本机开发）；
 带 `--demo` 时会额外创建 `operator / operator12345`、`viewer / viewer12345`、
 `enterprise / enterprise12345`（企业（演示））与 `engineer / engineer12345`（工程师（演示）），
-并写入 10 条 FDE 演示订单（`FDE-DEMO-0001` … `FDE-DEMO-0010`）。
+写入 10 条 FDE 演示订单（`FDE-DEMO-0001` … `FDE-DEMO-0010`）、5 个用户钱包与 17 条演示流水
+（4 条线下充值 + 10 条订单托管 + 2 条结算 + 1 条兑换），以及 3 个演示兑换码
+（`RDM-DEMO-2026-0001` 可用 / `-0002` 已使用 / `-0003` 已停用）。
 
 ## 配置
 
@@ -111,6 +117,17 @@ docker compose --profile local-db up -d local-db
 | POST | `/api/v1/fde/orders/{order_id}/complete` | Bearer（publisher/admin） | 确认交付，托管资金 `released` |
 | POST | `/api/v1/fde/orders/{order_id}/cancel` | Bearer（publisher/admin） | 取消待认领订单，托管资金 `refunded` |
 | WS | `/api/v1/fde/ws?token=<access_token>` | Bearer（query token） | FDE 订单实时推送 |
+| GET | `/api/v1/wallet` | Bearer | 我的钱包汇总（余额、用量/兑换/充值/结算合计、充值说明与客服） |
+| GET | `/api/v1/wallet/transactions` | Bearer | 我的钱包流水，支持 `type` / `page` / `page_size` |
+| POST | `/api/v1/wallet/redeem` | Bearer | 兑换码入账，`{code}`；码不存在 404，已用/停用/过期 409 |
+| GET | `/api/v1/admin/users` | Bearer（admin） | 用户列表，支持 `q` / `role` / `page` / `page_size`，含钱包余额 |
+| GET | `/api/v1/admin/roles` | Bearer（admin） | 角色目录（不含 `authenticated` 基线） |
+| PATCH | `/api/v1/admin/users/{user_id}` | Bearer（admin） | 启用/停用、调整角色；保护规则见下 |
+| GET | `/api/v1/admin/redeem-codes` | Bearer（admin） | 兑换码列表，支持 `status` / `q` / 分页 |
+| POST | `/api/v1/admin/redeem-codes` | Bearer（admin） | 批量生成兑换码，201，返回批次号与全部新码 |
+| PATCH | `/api/v1/admin/redeem-codes/{code_id}` | Bearer（admin） | 启用/停用兑换码；已使用不可改 |
+| GET | `/api/v1/admin/settings` | Bearer（admin） | 系统设置（固定顺序三键） |
+| PATCH | `/api/v1/admin/settings` | Bearer（admin） | 批量更新设置，未知 key / 空值 422 |
 | GET | `/health` | 公开 | 存活探针 |
 | GET | `/health/ready` | 公开 | DB + Casbin 就绪探针 |
 
@@ -170,7 +187,10 @@ escrow: held --complete--> released / --cancel--> refunded
 - 单号格式 `FDE-<年份>-<4 位序号>`；演示订单固定为 `FDE-DEMO-0001` … `FDE-DEMO-0010`，
   由 `init --demo` 时幂等写入（5 条 open、3 条 in_progress、2 条 completed，含 11 条工作日志）；
 - 业务错误：订单不存在 → 404；状态机不允许（已认领 / 状态不符 / 认领自己发布的订单）→ 409；
-  已认证但非发布者 / 非接单工程师 → 403；
+  已认证但非发布者 / 非接单工程师 → 403；发布时钱包余额不足 → 409「钱包余额不足，请先充值或兑换」；
+- 资金与订单同一事务：发布时从发布方钱包扣款托管（`order_payment`），取消退回（`order_refund`），
+  确认交付结算给接单工程师（`order_settlement`）；迁移前创建、没有 `order_payment` 流水的历史订单
+  状态照常流转，但不做钱包变动，避免凭空退款/结算；
 - 时间统一以 UTC 序列化为 RFC 3339（例如 `2026-11-01T06:20:00Z`）；
 - 实时推送：`WS /api/v1/fde/ws?token=<access_token>`（浏览器 WebSocket 无法带 Authorization 头，
   令牌从 query 读取并由 `TokenService` 校验）。连接后先收 `{"type":"connected","server_time":"..."}`；
@@ -205,6 +225,44 @@ escrow: held --complete--> released / --cancel--> refunded
 }
 ```
 
+## 钱包与管理后台
+
+### 钱包
+
+- 每个用户一行 `wallets`（`balance_cents`，单位分）；`wallet_transactions` 只追加，记录
+  `type`（`recharge` / `redeem` / `order_payment` / `order_refund` / `order_settlement`）、
+  `direction`（`credit` / `debit`）、`amount_cents`、`balance_after_cents` 与业务引用；
+- 余额只能在写流水的同一事务内变更；扣款用 `SELECT ... FOR UPDATE` 锁钱包行（SQLite 测试忽略该子句）；
+- `GET /api/v1/wallet` 返回：
+  ```json
+  {
+    "balance_cents": 150000,
+    "usage_total_cents": 0,
+    "recharge_total_cents": 50000,
+    "redeem_total_cents": 100000,
+    "income_total_cents": 0,
+    "recharge_enabled": false,
+    "recharge_note": "在线充值暂未开放，如需充值请联系平台客服。",
+    "support_contact": "support@stellera.example"
+  }
+  ```
+  `usage_total` 为全部 debit 合计，`income_total` 为订单结算入账合计；
+- 在线充值永久关闭：没有充值下单/回调端点，`recharge_enabled` 恒为 `false`，充值页只展示档位、
+  说明与历史充值流水；充值说明和客服联系方式来自系统设置；
+- 兑换码：管理员按批次生成 `RDM-XXXX-XXXX-XXXX`，一次性使用；兑换时先校验状态/过期，再用
+  条件 UPDATE（`status='active'` 且未过期）原子占用，`rowcount == 1` 才入账，避免并发重复兑换。
+
+### 管理后台（仅 admin）
+
+- 用户：列表支持用户名/邮箱/姓名搜索与角色过滤，返回钱包余额；PATCH 可启停、替换角色；
+  保护规则：不能停用自己、不能移除自己的 admin 角色、不能移除最后一个 admin；停用会立即吊销
+  该用户全部 refresh token；角色变更后调用 `resync_user` 立即刷新 Casbin 投影；
+- 兑换码：列表支持状态/关键字过滤；批量生成参数为面额（100..100,000,000 分）、数量（1..100）、
+  有效期（1..3650 天，可空）与备注（≤120）；已使用的码不可改状态，过期码不可重新启用；
+- 系统设置：白名单三键 `platform_name` / `support_contact` / `wallet_recharge_note`，
+  只插入缺失默认值，不覆盖管理员的修改；
+- 端点内除 Casbin 外会再用数据库角色校验一次（非 admin → 403），防止策略配置漂移。
+
 ## RBAC（Casbin）
 
 `casbin/model.conf` 只放模型：`g(r.sub, p.sub) && keyMatch2(r.obj, p.obj) && regexMatch(r.act, p.act)`。
@@ -214,7 +272,7 @@ escrow: held --complete--> released / --cancel--> refunded
   - `g, role:<child>, role:<parent>`（来自 `roles.parent_id`）；
   - `g, user:<id>, role:<name>`（来自 `user_roles`）+ 所有用户自动加入 `role:authenticated`；
 - 主体带 `user:` / `role:` 前缀，匿名主体为 `anonymous`，避免重名串角色；
-- 登录时重新投影该用户的角色（角色变更下次登录生效，多 worker 需重启，v0.1 接受）；
+- 登录时重新投影该用户的角色；管理端调整角色后会立即 `resync_user`（多 worker 需重启，v0.1 接受）；
 - 公开策略（login/token/refresh/health/docs）写在 `app/rbac/policies.py`；
 - 中间件行为：
   - 未认证 → 401（带 `WWW-Authenticate: Bearer`）；
@@ -225,16 +283,18 @@ escrow: held --complete--> released / --cancel--> refunded
 角色树与种子权限：
 
 ```text
-authenticated            所有登录用户的基线（/auth/me GET、/auth/logout POST、fde/orders* GET）
-├── viewer               只继承 authenticated 的只读能力（wallet/plaza/旧 orders 已下线）
-│   └── operator         同上（旧模块的运营写权限已随模块删除）
+authenticated            所有登录用户基线：auth/me GET、auth/logout POST、fde/orders* GET、
+                         wallet GET / wallet/transactions GET、wallet/redeem POST
+├── viewer               只继承 authenticated 的只读能力与兑换码入账
+│   └── operator         同上（运营写权限尚未定义）
 │       └── admin        /api/v1/* 全方法（含 /api/v1/admin/* 与 FDE 全部操作）
 ├── enterprise           fde/orders POST、fde/orders/*/complete、fde/orders/*/cancel
 └── engineer             fde/orders/*/claim、fde/orders/*/logs
 ```
 
-权限按模块路径收窄，viewer / operator 只能读取当前上线模块；需要新增模块时，
-在 `app/scripts/seed.py` 的 `PERMISSION_DEFINITIONS` 里补对应路径即可。
+权限按模块路径收窄，viewer / operator 只能读取当前上线模块并兑换码；新增模块时在
+`app/scripts/seed_data/rbac.toml` 里补对应的 `[[permissions]]`，再执行 seed 即可。
+当前种子共 13 条权限；管理端 `/api/v1/admin/*` 由 admin 的通配策略覆盖，端点内另有角色兜底校验。
 
 中间件顺序（外 → 内）：`CORS` → `AuthenticationMiddleware` → `CasbinRBACMiddleware`。
 启动时从数据库加载 RBAC；`app.state.enforcer` / `app.state.session_factory` 供依赖注入使用。
@@ -254,7 +314,9 @@ uv run alembic revision -m "msg"   # 新建迁移
 
 模型在 `app/models/`，初始迁移为 `migrations/versions/0001_initial_schema.py`，
 FDE 订单表在 `migrations/versions/0002_fde_orders.py`（`fde_orders` + `fde_order_logs`，
-FK 指向 `users`，单号唯一，`status` / `publisher_id` / `created_at` 建索引）。
+FK 指向 `users`，单号唯一，`status` / `publisher_id` / `created_at` 建索引）；
+钱包与管理后台在 `migrations/versions/0003_wallet_admin.py`（`wallets` / `wallet_transactions` /
+`redeem_codes` / `system_settings`，钱包用户唯一，兑换码唯一并有状态/批次索引）。
 生产数据库是 PostgreSQL；测试用临时 SQLite（`sqlite+aiosqlite`），不依赖 Docker/PG。
 
 ## 质量检查
@@ -269,8 +331,10 @@ uv run pytest
 
 测试覆盖：密码哈希、JWT 签发/过期/篡改/类型混用、登录/刷新旋转/重放吊销/登出、
 401 与 403 区分、角色继承矩阵、路径归一化、OPTIONS 放行、健康检查、种子幂等，
-以及 FDE 订单全流程（大厅过滤/分页、发布、认领、工作日志、完成/取消、我发布的、
-管理员跨角色操作、WebSocket 鉴权与 `order.created` / `order.updated` 推送）。
+FDE 订单全流程（大厅过滤/分页、发布、认领、工作日志、完成/取消、我发布的、
+管理员跨角色操作、WebSocket 鉴权与 `order.created` / `order.updated` 推送），
+钱包（汇总、流水过滤/分页、兑换成功/重复/停用/过期、发布扣款/取消退款/完成结算/余额不足），
+管理后台（用户搜索/分页/启停/改角色与保护规则、兑换码生成/过滤/启停、系统设置三键与权限拒绝）。
 
 ## Docker
 
@@ -313,8 +377,8 @@ docker build \
 
 ## 与仓库其他部分的关系
 
-- 前端在 `clients/web`，通过 `/api/v1/auth/*`、`/api/v1/fde/*`（含 `/api/v1/fde/ws` 实时推送）
-  与 `/health/ready` 对接；
+- 前端在 `clients/web`，通过 `/api/v1/auth/*`、`/api/v1/fde/*`（含 `/api/v1/fde/ws` 实时推送）、
+  `/api/v1/wallet/*`、`/api/v1/admin/*` 与 `/health/ready` 对接；
 - `infra/` 提供 postgres / redis / new-api；`deploy/compose.yaml` include `infra/` 并追加
   本服务的 `api` / `init` 与前端 `web`，迁移/初始化命令统一为 `python -m app.scripts.init`；
 - CI 直接在本服务目录跑原生命令：`uv run ruff check .`、`uv run ruff format --check .`、

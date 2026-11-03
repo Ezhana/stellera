@@ -30,8 +30,8 @@ name = "engineer"
 parent = "authenticated"
 description = "接单工程师：认领订单 / 提交工作日志"
 
-# 只保留当前上线的模块（auth + FDE 订单）；wallet / plaza / 旧 orders 已下线，
-# 不再写入权限表，避免前端权限卡片出现不存在的模块。
+# 当前上线模块：auth + FDE 订单 + wallet（在线充值永久关闭，只保留查询与兑换码入账）；
+# plaza / 旧 orders 已下线，不再写入权限表，避免前端权限卡片出现不存在的模块。
 
 [[permissions]]
 role = "authenticated"
@@ -44,6 +44,24 @@ role = "authenticated"
 object = "/api/v1/auth/logout"
 action = "^POST$"
 description = "登出并吊销 refresh token"
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/wallet"
+action = "^GET$"
+description = "只读：我的钱包"
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/wallet/transactions"
+action = "^GET$"
+description = "只读：钱包流水"
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/wallet/redeem"
+action = "^POST$"
+description = "兑换码入账"
 
 [[permissions]]
 role = "admin"

@@ -85,6 +85,9 @@ describe('AuthBff', () => {
       claimOrder: false,
       submitOrderLog: false,
       completeOrder: false,
+      viewWallet: false,
+      redeemCode: false,
+      manageAdmin: false,
     })
     expect(session.viewer.permissionGroups.map((group) => group.label)).toEqual([
       '账户资料',
@@ -121,7 +124,43 @@ describe('AuthBff', () => {
       claimOrder: true,
       submitOrderLog: true,
       completeOrder: true,
+      viewWallet: false,
+      redeemCode: false,
+      manageAdmin: false,
     })
+  })
+
+  it('derives wallet and admin capabilities from their policy probes', async () => {
+    vi.mocked(gateway.login).mockResolvedValueOnce({
+      access_token: 'access-1',
+      refresh_token: 'refresh-1',
+      user: {
+        ...viewerUser,
+        roles: ['admin'],
+        permissions: [
+          { object: '/api/v1/wallet', action: '^GET$' },
+          { object: '/api/v1/wallet/redeem', action: '^POST$' },
+          { object: '/api/v1/admin/users', action: '^GET$' },
+        ],
+      },
+    })
+
+    const session = await bff.login({ username: 'admin', password: 'secret' }, false)
+
+    expect(session.viewer.isAdmin).toBe(true)
+    expect(session.viewer.capabilities).toEqual({
+      publishOrder: false,
+      claimOrder: false,
+      submitOrderLog: false,
+      completeOrder: false,
+      viewWallet: true,
+      redeemCode: true,
+      manageAdmin: true,
+    })
+    expect(session.viewer.permissionGroups.map((group) => group.label)).toEqual([
+      '钱包',
+      '管理接口',
+    ])
   })
 
   it('supplies defaults for sparse backend payloads', async () => {
@@ -155,6 +194,9 @@ describe('AuthBff', () => {
         claimOrder: false,
         submitOrderLog: false,
         completeOrder: false,
+        viewWallet: false,
+        redeemCode: false,
+        manageAdmin: false,
       },
     })
   })

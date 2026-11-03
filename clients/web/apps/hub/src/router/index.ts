@@ -8,6 +8,8 @@ declare module 'vue-router' {
     title?: string
     /** Route only reachable with an authenticated session. */
     requiresAuth?: boolean
+    /** Route only reachable by super admins; others are redirected to the intro page. */
+    requiresAdmin?: boolean
     /** Route only reachable while anonymous (login). */
     publicOnly?: boolean
   }
@@ -49,6 +51,30 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '我发布的', requiresAuth: true },
   },
   {
+    path: '/wallet',
+    name: 'wallet',
+    component: () => import('@/pages/wallet/WalletPage.vue'),
+    meta: { title: '我的钱包', requiresAuth: true },
+  },
+  {
+    path: '/admin/users',
+    name: 'admin-users',
+    component: () => import('@/pages/admin/AdminUsersPage.vue'),
+    meta: { title: '用户管理', requiresAuth: true, requiresAdmin: true },
+  },
+  {
+    path: '/admin/redeem-codes',
+    name: 'admin-redeem-codes',
+    component: () => import('@/pages/admin/AdminRedeemCodesPage.vue'),
+    meta: { title: '兑换码管理', requiresAuth: true, requiresAdmin: true },
+  },
+  {
+    path: '/admin/settings',
+    name: 'admin-settings',
+    component: () => import('@/pages/admin/AdminSettingsPage.vue'),
+    meta: { title: '系统设置', requiresAuth: true, requiresAdmin: true },
+  },
+  {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     component: () => import('@/pages/NotFoundPage.vue'),
@@ -68,6 +94,10 @@ router.beforeEach(async (to) => {
 
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
+  }
+
+  if (to.meta.requiresAdmin && !auth.viewer?.isAdmin) {
+    return { name: 'intro' }
   }
 
   if (to.meta.publicOnly && auth.isAuthenticated) {

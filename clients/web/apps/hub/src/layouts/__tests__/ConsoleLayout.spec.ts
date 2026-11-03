@@ -14,7 +14,7 @@ vi.mock('@/bff/auth', () => ({
 
 const EmptyView = { template: '<div />' }
 
-const viewer: ViewerProfile = {
+const enterpriseViewer: ViewerProfile = {
   id: '4',
   username: 'enterprise',
   displayName: '企业（演示）',
@@ -31,11 +31,24 @@ const viewer: ViewerProfile = {
     claimOrder: false,
     submitOrderLog: false,
     completeOrder: true,
+    viewWallet: true,
+    redeemCode: true,
+    manageAdmin: false,
   },
+}
+
+const adminViewer: ViewerProfile = {
+  ...enterpriseViewer,
+  username: 'admin',
+  displayName: '系统管理员',
+  isAdmin: true,
+  roles: [{ key: 'admin', label: '管理员', tone: 'accent' }],
+  capabilities: { ...enterpriseViewer.capabilities, manageAdmin: true },
 }
 
 async function mountLayout(
   path = '/intro',
+  currentViewer: ViewerProfile = enterpriseViewer,
 ): Promise<{ wrapper: ReturnType<typeof mount>; router: Router }> {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -46,13 +59,17 @@ async function mountLayout(
       { path: '/intro', name: 'intro', component: EmptyView },
       { path: '/fde/hall', name: 'fde-hall', component: EmptyView },
       { path: '/fde/published', name: 'fde-published', component: EmptyView },
+      { path: '/wallet', name: 'wallet', component: EmptyView },
+      { path: '/admin/users', name: 'admin-users', component: EmptyView },
+      { path: '/admin/redeem-codes', name: 'admin-redeem-codes', component: EmptyView },
+      { path: '/admin/settings', name: 'admin-settings', component: EmptyView },
     ],
   })
   await router.push(path)
   await router.isReady()
 
   const wrapper = mount(ConsoleLayout, {
-    props: { viewer },
+    props: { viewer: currentViewer },
     global: { plugins: [pinia, router] },
     slots: { default: '<div data-test="content">内容</div>' },
   })
@@ -70,12 +87,45 @@ describe('ConsoleLayout', () => {
     const groupLabels = wrapper
       .findAll('.console-layout__nav-group-label')
       .map((node) => node.text())
-    expect(groupLabels).toEqual(['平台', 'FDE 订单'])
+    expect(groupLabels).toEqual(['平台', 'FDE 订单', '钱包'])
 
     const links = wrapper.findAll('.console-layout__nav-item')
     const labels = links.map((node) => node.text().replace(/\s+/g, ''))
-    expect(labels).toEqual(expect.arrayContaining(['平台简介', '订单大厅实时', '我发布的']))
+    expect(labels).toEqual(
+      expect.arrayContaining(['平台简介', '订单大厅实时', '我发布的', '我的钱包']),
+    )
     expect(wrapper.find('[data-test="content"]').text()).toBe('内容')
+  })
+
+  it('never renders the admin group for a non-admin viewer', async () => {
+    const { wrapper } = await mountLayout('/wallet')
+
+    const groupLabels = wrapper
+      .findAll('.console-layout__nav-group-label')
+      .map((node) => node.text())
+    expect(groupLabels).toEqual(['平台', 'FDE 订单', '钱包'])
+    expect(wrapper.text()).not.toContain('管理')
+    expect(wrapper.find('#console-nav-admin').exists()).toBe(false)
+  })
+
+  it('renders the admin group and resolves admin routes for admins', async () => {
+    const { wrapper } = await mountLayout('/admin/redeem-codes', adminViewer)
+
+    const groupLabels = wrapper
+      .findAll('.console-layout__nav-group-label')
+      .map((node) => node.text())
+    expect(groupLabels).toEqual(['平台', 'FDE 订单', '钱包', '管理'])
+
+    const links = wrapper.findAll('.console-layout__nav-item')
+    expect(links.map((node) => node.text().replace(/\s+/g, ''))).toEqual(
+      expect.arrayContaining(['用户', '兑换码', '系统设置']),
+    )
+
+    const active = wrapper.find('.console-layout__nav-item.is-active')
+    expect(active.text()).toBe('兑换码')
+    expect(wrapper.find('#console-nav-admin').attributes('style') ?? '').not.toContain(
+      'display: none',
+    )
   })
 
   it('marks the active child and keeps its group expanded', async () => {

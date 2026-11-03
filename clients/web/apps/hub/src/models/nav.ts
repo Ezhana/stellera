@@ -16,6 +16,8 @@ export interface NavGroup {
   label: string
   icon: IconName
   children: readonly NavLeaf[]
+  /** Admin-only groups are filtered out for every other viewer. */
+  requiresAdmin?: boolean
 }
 
 /**
@@ -51,6 +53,28 @@ export const CONSOLE_NAV: readonly NavGroup[] = [
       },
     ],
   },
+  {
+    key: 'wallet',
+    label: '钱包',
+    icon: 'wallet',
+    children: [{ key: 'wallet', label: '我的钱包', icon: 'wallet', routeName: 'wallet' }],
+  },
+  {
+    key: 'admin',
+    label: '管理',
+    icon: 'settings',
+    requiresAdmin: true,
+    children: [
+      { key: 'admin-users', label: '用户', icon: 'user', routeName: 'admin-users' },
+      {
+        key: 'admin-redeem-codes',
+        label: '兑换码',
+        icon: 'ticket',
+        routeName: 'admin-redeem-codes',
+      },
+      { key: 'admin-settings', label: '系统设置', icon: 'settings', routeName: 'admin-settings' },
+    ],
+  },
 ]
 
 export interface ResolvedNavLeaf {
@@ -58,13 +82,19 @@ export interface ResolvedNavLeaf {
   leaf: NavLeaf
 }
 
+/** Filter the console tree for the current viewer; admin groups never render for other roles. */
+export function navForViewer(viewer: { isAdmin: boolean }): NavGroup[] {
+  return CONSOLE_NAV.filter((group) => !group.requiresAdmin || viewer.isAdmin)
+}
+
 /** Resolve the group/leaf pair that owns a route name (used for active + expanded state). */
 export function findNavGroupForRoute(
   routeName: string | symbol | null | undefined,
+  groups: readonly NavGroup[] = CONSOLE_NAV,
 ): ResolvedNavLeaf | null {
   if (typeof routeName !== 'string') return null
 
-  for (const group of CONSOLE_NAV) {
+  for (const group of groups) {
     const leaf = group.children.find((child) => child.routeName === routeName)
     if (leaf) return { group, leaf }
   }

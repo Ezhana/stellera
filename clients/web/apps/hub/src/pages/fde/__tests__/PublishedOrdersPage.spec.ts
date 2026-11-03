@@ -78,6 +78,7 @@ async function mountPage(viewer: ViewerProfile = buildViewer()): Promise<MountRe
       { path: '/intro', name: 'intro', component: EmptyView },
       { path: '/fde/hall', name: 'fde-hall', component: EmptyView },
       { path: '/fde/published', name: 'fde-published', component: EmptyView },
+      { path: '/wallet', name: 'wallet', component: EmptyView },
     ],
   })
   await router.push('/fde/published')
@@ -216,6 +217,9 @@ describe('PublishedOrdersPage', () => {
           claimOrder: false,
           submitOrderLog: false,
           completeOrder: false,
+          viewWallet: false,
+          redeemCode: false,
+          manageAdmin: false,
         },
       }),
     )

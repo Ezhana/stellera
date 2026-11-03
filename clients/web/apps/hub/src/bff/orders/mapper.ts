@@ -10,6 +10,8 @@ import type {
 } from '@/models'
 import { FDE_ORDER_STATUSES } from '@/models'
 
+import { formatCents, formatDateTimeLabel } from '@/lib/money'
+
 import type { OrderDetailDto, OrderDto, WorkLogDto } from './dto'
 
 /** Label + tone pair rendered by a chip; unknown backend values keep the raw key. */
@@ -35,40 +37,10 @@ export function formatEscrow(escrowStatus: string): StatusPresentation {
   return ESCROW_META.get(escrowStatus) ?? { label: escrowStatus || '未知托管状态', tone: 'default' }
 }
 
-/** `¥86,000` / `¥123.45` — grouped yuan with tabular-friendly output (no locale surprises). */
-export function formatPriceCents(cents: number): string {
-  const safe = Number.isFinite(cents) ? Math.round(cents) : 0
-  const sign = safe < 0 ? '-' : ''
-  const absolute = Math.abs(safe)
-  const yuan = Math.floor(absolute / 100)
-  const fen = absolute % 100
-  const grouped = String(yuan).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-  const fraction = fen === 0 ? '' : `.${String(fen).padStart(2, '0')}`
-  return `${sign}¥${grouped}${fraction}`
-}
+/** Backwards-compatible alias for the shared formatter in `lib/money`. */
+export const formatPriceCents = formatCents
 
-function pad2(value: number): string {
-  return String(value).padStart(2, '0')
-}
-
-/**
- * `11-01 14:20` (other day) or `今天 14:20` (same local day).
- *
- * Uses the browser's local timezone; `now` is injectable so tests stay deterministic.
- */
-export function formatDateTimeLabel(iso: string, now: Date = new Date()): string {
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return '—'
-
-  const time = `${pad2(date.getHours())}:${pad2(date.getMinutes())}`
-  const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-  if (sameDay) return `今天 ${time}`
-
-  return `${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${time}`
-}
+export { formatDateTimeLabel }
 
 /** `7 天` */
 export function formatDeliveryLabel(deliveryDays: number): string {

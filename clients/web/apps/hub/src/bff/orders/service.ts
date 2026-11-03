@@ -7,6 +7,7 @@ import type {
 } from '@/models'
 
 import { BffError, toBffError } from '../errors'
+import type { TokenProvider } from '../token-provider'
 import type { OrderListDto } from './dto'
 import type { OrderGateway } from './gateway'
 import { summarizeOrders, toOrderDetailView, toOrderView, toWorkLogView } from './mapper'
@@ -17,10 +18,8 @@ import type {
 } from './realtime'
 import type { CreateOrderInput, CreateWorkLogInput } from './types'
 
-/** Narrow port the orders BFF uses to read the current access token (implemented by `AuthBff`). */
-export interface OrderTokenProvider {
-  accessToken(): string | null
-}
+/** Kept for backwards compatibility with existing orders tests; the port lives in `bff/token-provider`. */
+export type OrderTokenProvider = TokenProvider
 
 /**
  * Orders BFF.

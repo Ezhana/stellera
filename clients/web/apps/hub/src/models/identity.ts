@@ -23,7 +23,7 @@ export interface PermissionGroupView {
 export type ViewerStatus = 'active' | 'inactive'
 
 /**
- * Capabilities the current viewer has on the FDE order module.
+ * Capabilities the current viewer has across the console modules.
  *
  * Derived by the auth BFF from the raw Casbin permissions; pages only branch on these booleans and
  * never parse policy paths themselves.
@@ -33,6 +33,9 @@ export interface HubCapabilities {
   claimOrder: boolean
   submitOrderLog: boolean
   completeOrder: boolean
+  viewWallet: boolean
+  redeemCode: boolean
+  manageAdmin: boolean
 }
 
 /**

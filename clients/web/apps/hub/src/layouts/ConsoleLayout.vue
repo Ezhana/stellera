@@ -6,25 +6,26 @@ import UiBrandMark from '@/components/ui/UiBrandMark.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiChip from '@/components/ui/UiChip.vue'
 import UiIcon from '@/components/ui/UiIcon.vue'
-import { CONSOLE_NAV, findNavGroupForRoute, type ViewerProfile } from '@/models'
+import { CONSOLE_NAV, findNavGroupForRoute, navForViewer, type ViewerProfile } from '@/models'
 import { useAuthStore } from '@/stores/auth'
 
 interface ConsoleLayoutProps {
   viewer: ViewerProfile
 }
 
-defineProps<ConsoleLayoutProps>()
+const props = defineProps<ConsoleLayoutProps>()
 
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
 const loggingOut = ref(false)
+const groups = computed(() => navForViewer({ isAdmin: props.viewer.isAdmin }))
 const expandedGroups = ref<Record<string, boolean>>(
   Object.fromEntries(CONSOLE_NAV.map((group) => [group.key, true])),
 )
 
-const active = computed(() => findNavGroupForRoute(route.name))
+const active = computed(() => findNavGroupForRoute(route.name, groups.value))
 
 /** Keep the group that owns the current route open, even after a manual collapse. */
 watch(
@@ -68,7 +69,7 @@ async function handleLogout(): Promise<void> {
         <p class="console-layout__nav-title">工作台</p>
 
         <div
-          v-for="group in CONSOLE_NAV"
+          v-for="group in groups"
           :key="group.key"
           class="console-layout__nav-group"
           :class="{ 'is-active-group': active?.group.key === group.key }"

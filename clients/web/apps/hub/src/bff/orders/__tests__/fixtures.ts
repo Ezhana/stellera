@@ -81,6 +81,9 @@ export function buildViewer(overrides: Partial<ViewerProfile> = {}): ViewerProfi
       claimOrder: false,
       submitOrderLog: false,
       completeOrder: false,
+      viewWallet: true,
+      redeemCode: true,
+      manageAdmin: false,
     },
     ...overrides,
   }

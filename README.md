@@ -5,8 +5,8 @@
 
 | 项目 | 目录 | 工具链 | 说明 |
 | --- | --- | --- | --- |
-| `hub`（web） | `clients/web` | pnpm workspace（Node 24） | Vue 3 + Vite 前端工作区，应用在 `apps/hub`（Obsidian 黑金 FDE 交付控制台：平台简介 + 实时订单大厅，含 BFF/页面模型层） |
-| `hub-api` | `services/hub-api` | uv（Python 3.13） | FastAPI + PostgreSQL，Authlib JWT 登录、pycasbin RBAC 与 FDE 订单/实时推送 |
+| `hub`（web） | `clients/web` | pnpm workspace（Node 24） | Vue 3 + Vite 前端工作区，应用在 `apps/hub`（Obsidian 黑金 FDE 交付控制台：平台简介 + 实时订单大厅 + 钱包 + 管理后台，含 BFF/页面模型层） |
+| `hub-api` | `services/hub-api` | uv（Python 3.13） | FastAPI + PostgreSQL，Authlib JWT 登录、pycasbin RBAC、FDE 订单/实时推送与钱包/管理后台 |
 
 `infra/` 提供本地依赖（PostgreSQL、Redis、new-api）；`deploy/` 是单机发布编排：include `infra/`，
 再追加 `hub-api` 与 `web` 两个应用镜像。
@@ -24,7 +24,7 @@ just ps
 ```
 
 需要演示账号与订单时，把 `deploy/.env` 的 `INIT_ARGS` 设为 `--demo` 后重新 `just up`：会额外写入
-`enterprise / engineer / operator / viewer` 演示账号与 10 条 FDE 演示订单。
+`enterprise / engineer / operator / viewer` 演示账号、10 条 FDE 演示订单，以及钱包余额/流水与 3 个演示兑换码。
 
 | 地址 | 说明 |
 | --- | --- |
@@ -32,6 +32,8 @@ just ps
 | <http://localhost:8080/intro> | 平台简介（轮播图 + 叙事；登录后的默认页） |
 | <http://localhost:8080/fde/hall> | FDE 订单大厅（WebSocket 实时更新） |
 | <http://localhost:8080/fde/published> | 我发布的（查看当前发布、发布新需求） |
+| <http://localhost:8080/wallet> | 钱包（余额、用量、充值记录、兑换码） |
+| <http://localhost:8080/admin/users> | 管理后台（仅 admin：用户 / 兑换码 / 系统设置） |
 | <http://localhost:3000> | new-api 控制台 |
 
 管理员账号默认 `admin` / `admin12345`（`deploy/.env` 的 `ADMIN_*` 可改），只适合本机与测试环境。
@@ -68,7 +70,8 @@ new-api 数据在 `infra/new-api/data`。
 
 业务闭环：**企业发布需求 → 平台代收并托管资金 → 工程师接单交付（提交工作日志）→ 企业验收 → 平台结算**。
 
-- 左侧菜单为两级：`平台 → 平台简介`、`FDE 订单 → 订单大厅（实时）/ 我发布的`；钱包、广场等旧模块已暂时移除。
+- 左侧菜单为两级：`平台 → 平台简介`、`FDE 订单 → 订单大厅（实时）/ 我发布的`、`钱包 → 我的钱包`；
+  超级管理员额外看到 `管理 → 用户 / 兑换码 / 系统设置`。
 - 订单大厅列表展示任务、行业、交付周期、价格、状态、托管状态与发布时间，支持状态/行业/关键词筛选。
 - 实时更新走 `WebSocket /api/v1/fde/ws`：创建、认领、日志、完成、取消都会广播
   `order.created` / `order.updated`，断线自动重连，刷新列表兜底。
@@ -76,6 +79,24 @@ new-api 数据在 `infra/new-api/data`。
   未认证请求由 Casbin 中间件返回 401/403。
 - API 一览见 [`services/hub-api/README.md`](services/hub-api/README.md)，
   取舍记录见 [`docs/adr/0003-fde-orders.md`](docs/adr/0003-fde-orders.md)。
+
+## 钱包与管理后台
+
+钱包页展示**可用余额、累计用量、充值与兑换码**四个区域。余额以“分”存储，每次变更都写入
+`wallet_transactions` 流水（充值 / 兑换 / 订单消费 / 退款 / 结算），页面同时展示流水明细与累计口径。
+
+- **在线充值暂不开放**：充值页保留金额档位与历史充值记录，按钮置灰，说明与客服联系方式来自系统设置；
+- **兑换码**：管理员按批次生成 `RDM-XXXX-XXXX-XXXX` 一次性兑换码，用户在钱包页输入即可入账；
+- **FDE 资金打通**：发布需求时从发布方余额扣款托管，取消订单退回，确认交付后结算给接单工程师，
+  变动与订单状态在同一事务内完成；
+- **管理后台（仅超级管理员 `admin`）**：
+  - 用户：搜索、按角色筛选、启用/停用、调整角色（不能停用自己、不能移除最后一个管理员）；
+  - 兑换码：按状态/关键词筛选、批量生成、停用/启用；
+  - 系统设置：平台名称、客服联系方式、充值说明（白名单键值，不覆盖已有修改）；
+- 非管理员前端不渲染“管理”菜单，直接访问 `/admin/*` 路由会被重定向回平台简介。
+
+接口与权限细节见 [`services/hub-api/README.md`](services/hub-api/README.md) 与
+[`docs/adr/0004-wallet-admin.md`](docs/adr/0004-wallet-admin.md)。
 
 ## 本地开发（热更新）
 
@@ -141,7 +162,7 @@ clients/web/                  # 前端工作区：apps/hub、共享 ESLint/Prett
 services/hub-api/             # 后端服务：app/、casbin/、migrations/、tests/
 infra/                        # 本地依赖编排：postgres/、redis、new-api/
 deploy/                       # 发布编排：compose.yaml（include infra + hub-api/web）与 .env.example
-docs/adr/                     # 架构决策记录（0001 登录与 RBAC、0002 前端 BFF/页面模型、0003 FDE 订单）
+docs/adr/                     # 架构决策记录（0001 登录与 RBAC、0002 前端 BFF/页面模型、0003 FDE 订单、0004 钱包与管理后台）
 tools/                        # 仓库级维护工具（gen-api 等，按需创建）
 ```
 

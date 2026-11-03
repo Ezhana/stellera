@@ -13,13 +13,22 @@ const ROLE_META: Readonly<Record<string, { label: string; tone: RoleView['tone']
   authenticated: { label: '已认证', tone: 'default' },
 }
 
-/** Concrete probe paths for the FDE capabilities; the backend policies use the same prefixes. */
+/** Concrete probe paths for the viewer capabilities; the backend policies use the same prefixes. */
 const CAPABILITY_PROBES = {
   publishOrder: { path: '/api/v1/fde/orders', method: 'POST' },
   claimOrder: { path: '/api/v1/fde/orders/1/claim', method: 'POST' },
   submitOrderLog: { path: '/api/v1/fde/orders/1/logs', method: 'POST' },
   completeOrder: { path: '/api/v1/fde/orders/1/complete', method: 'POST' },
+  viewWallet: { path: '/api/v1/wallet', method: 'GET' },
+  redeemCode: { path: '/api/v1/wallet/redeem', method: 'POST' },
+  manageAdmin: { path: '/api/v1/admin/users', method: 'GET' },
 } as const
+
+/** Known role label/tone; unknown keys degrade to the raw key + default tone. */
+export function describeRole(key: string): RoleView {
+  const meta = ROLE_META[key]
+  return meta ? { key, label: meta.label, tone: meta.tone } : { key, label: key, tone: 'default' }
+}
 
 /** Map the backend user DTO into the stable viewer page model. */
 export function toViewerProfile(user: UserDto): ViewerProfile {
@@ -47,10 +56,7 @@ export function toViewerProfile(user: UserDto): ViewerProfile {
 }
 
 function toRoleViews(roleKeys: readonly string[]): RoleView[] {
-  return [...new Set(roleKeys)].map((key) => {
-    const meta = ROLE_META[key]
-    return meta ? { key, label: meta.label, tone: meta.tone } : { key, label: key, tone: 'default' }
-  })
+  return [...new Set(roleKeys)].map(describeRole)
 }
 
 function toPermissionGroups(permissions: readonly PermissionDto[]): PermissionGroupView[] {
@@ -109,6 +115,21 @@ function toCapabilities(permissions: readonly PermissionLike[]): HubCapabilities
       permissions,
       CAPABILITY_PROBES.completeOrder.path,
       CAPABILITY_PROBES.completeOrder.method,
+    ),
+    viewWallet: permissionAllows(
+      permissions,
+      CAPABILITY_PROBES.viewWallet.path,
+      CAPABILITY_PROBES.viewWallet.method,
+    ),
+    redeemCode: permissionAllows(
+      permissions,
+      CAPABILITY_PROBES.redeemCode.path,
+      CAPABILITY_PROBES.redeemCode.method,
+    ),
+    manageAdmin: permissionAllows(
+      permissions,
+      CAPABILITY_PROBES.manageAdmin.path,
+      CAPABILITY_PROBES.manageAdmin.method,
     ),
   }
 }

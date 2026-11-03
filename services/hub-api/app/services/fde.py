@@ -20,6 +20,7 @@ from app.models.base import utcnow
 from app.models.fde import FdeOrder, FdeOrderLog
 from app.models.user import User
 from app.rbac.enforcer import load_user_role_names
+from app.services import wallet as wallet_service
 
 ORDER_STATUS_OPEN = "open"
 ORDER_STATUS_IN_PROGRESS = "in_progress"
@@ -274,6 +275,21 @@ async def create_order(
     )
     session.add(order)
     await session.flush()
+    # 发布即扣款托管：与订单创建同一事务，余额不足时整单不落库。
+    try:
+        wallet = await wallet_service.get_or_create_wallet(session, publisher_id, for_update=True)
+        await wallet_service.debit(
+            session,
+            wallet,
+            price_cents,
+            type=wallet_service.TRANSACTION_TYPE_ORDER_PAYMENT,
+            description=f"发布订单 {order.code} 托管",
+            reference_type=wallet_service.REFERENCE_TYPE_FDE_ORDER,
+            reference_id=order.id,
+            created_at=now,
+        )
+    except wallet_service.WalletConflictError as exc:
+        raise FdeConflictError("钱包余额不足，请先充值或兑换") from exc
     await session.commit()
     return OrderAggregate(order=order, work_log_count=0)
 
@@ -347,6 +363,21 @@ async def complete_order(session: AsyncSession, *, order_id: int, actor_id: int)
     order.escrow_status = ESCROW_STATUS_RELEASED
     order.completed_at = now
     order.updated_at = now
+    # 只有真实扣过托管款的订单才放款；历史/直接写库的订单不凭空结算。
+    if order.engineer_id is not None and await wallet_service.has_order_payment(session, order.id):
+        wallet = await wallet_service.get_or_create_wallet(
+            session, order.engineer_id, for_update=True
+        )
+        await wallet_service.credit(
+            session,
+            wallet,
+            order.price_cents,
+            type=wallet_service.TRANSACTION_TYPE_ORDER_SETTLEMENT,
+            description=f"订单 {order.code} 结算",
+            reference_type=wallet_service.REFERENCE_TYPE_FDE_ORDER,
+            reference_id=order.id,
+            created_at=now,
+        )
     await session.flush()
     await session.commit()
     return OrderAggregate(order=order, work_log_count=await _count_logs(session, order.id))
@@ -363,6 +394,21 @@ async def cancel_order(session: AsyncSession, *, order_id: int, actor_id: int) -
     order.status = ORDER_STATUS_CANCELLED
     order.escrow_status = ESCROW_STATUS_REFUNDED
     order.updated_at = now
+    # 只有真实扣过托管款的订单才退款；历史/直接写库的订单不凭空退款。
+    if await wallet_service.has_order_payment(session, order.id):
+        wallet = await wallet_service.get_or_create_wallet(
+            session, order.publisher_id, for_update=True
+        )
+        await wallet_service.credit(
+            session,
+            wallet,
+            order.price_cents,
+            type=wallet_service.TRANSACTION_TYPE_ORDER_REFUND,
+            description=f"取消订单 {order.code} 退款",
+            reference_type=wallet_service.REFERENCE_TYPE_FDE_ORDER,
+            reference_id=order.id,
+            created_at=now,
+        )
     await session.flush()
     await session.commit()
     return OrderAggregate(order=order, work_log_count=await _count_logs(session, order.id))

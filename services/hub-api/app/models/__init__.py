@@ -3,20 +3,27 @@
 from app.models.base import Base, TimestampMixin, ensure_utc, utcnow
 from app.models.fde import FdeOrder, FdeOrderLog
 from app.models.rbac import Permission, Role, RolePermission, UserRole
+from app.models.redeem import RedeemCode
 from app.models.refresh_token import RefreshToken
+from app.models.system_setting import SystemSetting
 from app.models.user import User
+from app.models.wallet import Wallet, WalletTransaction
 
 __all__ = [
     "Base",
     "FdeOrder",
     "FdeOrderLog",
     "Permission",
+    "RedeemCode",
     "RefreshToken",
     "Role",
     "RolePermission",
+    "SystemSetting",
     "TimestampMixin",
     "User",
     "UserRole",
+    "Wallet",
+    "WalletTransaction",
     "ensure_utc",
     "utcnow",
 ]

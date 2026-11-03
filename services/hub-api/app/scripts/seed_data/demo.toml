@@ -193,3 +193,47 @@ days_ago = 60
 content = "整理 PoC 结项报告与规则维护说明，交付验收。"
 worked_hours = 4.0
 days_ago = 57
+
+# 演示钱包：初始余额通过“线下充值（演示）”流水入账，保证余额与流水一致。
+# enterprise 的初始余额要覆盖 10 条演示订单托管（合计 87,700,000 分）。
+
+[[wallets]]
+username = "admin"
+initial_balance_cents = 300_000_000
+
+[[wallets]]
+username = "operator"
+initial_balance_cents = 200_000
+
+[[wallets]]
+username = "viewer"
+initial_balance_cents = 50_000
+
+[[wallets]]
+username = "enterprise"
+initial_balance_cents = 300_000_000
+
+[[wallets]]
+username = "engineer"
+initial_balance_cents = 0
+
+# 演示兑换码：active 可兑换、used 已由 viewer 使用、disabled 已停用。
+
+[[redeem_codes]]
+code = "RDM-DEMO-2026-0001"
+amount_cents = 100_000
+status = "active"
+note = "新人体验金（演示）"
+
+[[redeem_codes]]
+code = "RDM-DEMO-2026-0002"
+amount_cents = 100_000
+status = "used"
+note = "企业礼包（演示）"
+used_by_username = "viewer"
+
+[[redeem_codes]]
+code = "RDM-DEMO-2026-0003"
+amount_cents = 50_000
+status = "disabled"
+note = "已停用（演示）"

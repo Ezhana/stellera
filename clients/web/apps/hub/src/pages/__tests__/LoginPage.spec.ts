@@ -36,6 +36,9 @@ const viewer: ViewerProfile = {
     claimOrder: true,
     submitOrderLog: true,
     completeOrder: true,
+    viewWallet: true,
+    redeemCode: true,
+    manageAdmin: true,
   },
 }
 

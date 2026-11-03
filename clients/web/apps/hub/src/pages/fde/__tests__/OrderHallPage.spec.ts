@@ -93,6 +93,7 @@ async function mountPage(): Promise<MountResult> {
       { path: '/intro', name: 'intro', component: EmptyView },
       { path: '/fde/hall', name: 'fde-hall', component: EmptyView },
       { path: '/fde/published', name: 'fde-published', component: EmptyView },
+      { path: '/wallet', name: 'wallet', component: EmptyView },
     ],
   })
   await router.push('/fde/hall')

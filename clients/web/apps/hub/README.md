@@ -4,7 +4,10 @@ STELLERA HUB 的 Console 前端：登录页 + 控制台外壳，视觉使用 `@e
 （Obsidian & Gold 黑金商务风、Inter 正文 + Playfair Display 标题、暗色单模式）。页面通过前端内的 BFF/页面模型层消费后端数据，
 组件不直接绑定后端 DTO 或原始权限字段。
 
-当前范围是登录、身份与权限展示；钱包 / 订单 / 广场以模块卡片呈现，等待后续接入。
+当前范围是登录与身份、平台简介、FDE 订单（大厅 / 我发布的）、钱包（余额 / 用量 / 充值 / 兑换码）
+以及超级管理员的管理后台（用户 / 兑换码 / 系统设置）。页面全部通过 BFF/页面模型层消费后端数据，
+组件不直接绑定后端 DTO 或原始权限字段。钱包与 FDE 的资金闭环（发布扣款、取消退款、完成结算）
+在 `hub-api` 中实现，前端只负责展示与操作。
 更完整的架构取舍见 [`docs/adr/0002-frontend-bff-page-models.md`](../../../docs/adr/0002-frontend-bff-page-models.md)。
 
 ## 技术栈
@@ -20,26 +23,28 @@ STELLERA HUB 的 Console 前端：登录页 + 控制台外壳，视觉使用 `@e
 ```text
 src/
 ├── models/                 # 稳定的页面模型（前端拥有，不出现后端字段）
-│   ├── identity.ts         # ViewerProfile / SessionView / 权限分组
-│   ├── console.ts          # ConsolePageModel / ModuleView / ConsoleSummary
-│   └── modules.ts          # 前端维护的模块目录（钱包/订单/广场）
+│   ├── identity.ts         # ViewerProfile / SessionView / HubCapabilities / 权限分组
+│   ├── nav.ts              # 前端拥有的两级导航树 + navForViewer（管理组仅 admin）
+│   ├── orders.ts           # FDE 订单页面模型与状态目录
+│   ├── wallet.ts           # 钱包汇总 / 流水 / 兑换结果页面模型
+│   ├── admin.ts            # 管理后台用户 / 兑换码 / 系统设置页面模型
+│   └── icons.ts            # UiIcon 支持的图标名
 ├── bff/                    # 前端 BFF：DTO 校验、映射、聚合、错误归一化
-│   ├── auth/
-│   │   ├── dto.ts          # 唯一出现后端字段名的 zod schema
-│   │   ├── gateway.ts      # AuthGateway 端口 + HttpAuthGateway 实现
-│   │   ├── mapper.ts       # UserDto -> ViewerProfile，权限 -> 业务标签
-│   │   ├── token-store.ts  # localStorage / sessionStorage（仅 BFF 使用）
-│   │   └── service.ts      # AuthBff：登录/恢复/刷新/登出 + SessionView
-│   ├── console/index.ts    # buildConsolePageModel：模块访问 + 摘要聚合
+│   ├── auth/               # AuthBff：登录/恢复/刷新/登出 + SessionView
+│   ├── orders/             # OrdersBff：订单大厅、发布、认领、日志、完成/取消、WebSocket
+│   ├── wallet/             # WalletBff：钱包汇总、流水分页、兑换码入账
+│   ├── admin/              # AdminBff：用户、角色目录、兑换码、系统设置
+│   ├── token-provider.ts   # 各 feature BFF 共用的 access token 端口
 │   ├── permissions.ts      # 前端权限匹配（keyMatch2/regex 子集）
 │   ├── describe.ts         # 原始 policy -> 中文分组/动作标签
-│   └── errors.ts           # BffError 稳定错误码
+│   └── errors.ts           # BffError 稳定错误码（context：login/session/refresh/orders/wallet/admin）
 ├── components/ui/          # Obsidian 组件层（Button/Input/Checkbox/Card/Chip/Alert/BrandMark/Icon）
 ├── layouts/                # AuthLayout（品牌面板 + 表单）、ConsoleLayout（侧栏 + 内容）
-├── pages/                  # LoginPage、ConsolePage、NotFoundPage
-├── router/index.ts         # 路由与登录守卫（bootstrap + redirect）
+├── pages/                  # Login / PlatformIntro / fde/* / wallet/* / admin/* / NotFound
+├── router/index.ts         # 路由与登录守卫（bootstrap + redirect + requiresAdmin）
 ├── stores/auth.ts          # 很薄的会话状态：只持有 SessionView
 ├── lib/http.ts             # 通用 JSON transport：ApiError、超时、base URL
+├── lib/money.ts            # 金额（分→元）与时间展示的共享格式化
 └── theme/                  # Obsidian 注册表与主题管理器
 ```
 
@@ -49,29 +54,26 @@ src/
 
 ```text
 FastAPI DTO
-  ↓  HttpAuthGateway（zod 校验、字段容错）
-AuthBff（token 持久化、刷新旋转、错误归一化）
+  ↓  feature gateway（zod 校验、字段容错）
+feature BFF（token 注入、请求编排、错误归一化）
   ↓  mapper
-SessionView / ViewerProfile（稳定页面模型）
-  ↓  Pinia store（只存 SessionView）
-ConsolePageModel（模块访问 + 权限分组 + 摘要聚合）
-  ↓
+页面模型（WalletSummaryView / AdminUserView / FdeOrderView …）
+  ↓  Pinia store 只持有 SessionView
 页面与 Ui* 组件
 ```
 
 约束：
 
-- **后端字段名只出现在 `bff/auth/dto.ts`**；页面、组件、store 不 import 原始 DTO。
+- **后端字段名只出现在各 feature 的 `bff/*/dto.ts`**；页面、组件、store 不 import 原始 DTO。
 - **页面不直接使用 `fetch` / `ApiError` / localStorage**；这些由 BFF 收口。
-- `HttpAuthGateway` 是端口：未来接独立服务端 BFF 时，实现同一个 `AuthGateway` 即可，
-  `AuthBff`、store 和页面不需要改。
+- 每个 BFF 的 gateway 都是端口：未来接独立服务端 BFF 时实现同一个接口即可，service、store 和页面不需要改。
 - BFF 对缺失/空值字段做兜底：`full_name` 为空用 `username`，`email` 空串归一为 `null`，
-  `roles`/`permissions` 缺省为空数组，未知角色/权限有降级标签。
-- 模块访问不是后端直接返回的：BFF 用前端模块目录（`models/modules.ts`）加后端权限做匹配，
-  生成 `moduleAccess: { wallet/orders/plaza: 'write'|'read'|'none' }` 和业务文案。
-- 权限展示不直接渲染正则：`permissions.ts` + `describe.ts` 把 `/api/v1/wallet/*`、
-  `^(GET|POST)$` 这类 policy 映射为「钱包 · 查看/创建/全部操作」，原始路径只作为次要信息保留。
-- `ConsolePageModel` 汇总角色数、权限项、可读/可写模块数；页面只消费这个模型。
+  未知交易类型 / 兑换码状态 / 角色都有降级标签，后端新增枚举值不会让页面崩溃。
+- 权限展示不直接渲染正则：`permissions.ts` + `describe.ts` 把 `/api/v1/wallet`、
+  `^(GET|POST)$` 这类 policy 映射为「钱包 · 查看/创建」，原始路径只作为次要信息保留。
+- `HubCapabilities` 由 auth BFF 用权限探针派生（发布订单、认领、钱包、兑换码、管理后台），页面只分支布尔值。
+- 导航树由前端拥有，`navForViewer({ isAdmin })` 过滤 `requiresAdmin` 分组；
+  管理端路由带 `requiresAdmin` meta，非 admin 会被守卫重定向回 `/intro`。
 
 ## 本地开发
 
@@ -110,11 +112,12 @@ pnpm --filter hub preview     # 预览构建产物
 
 - 登录时勾选「保持登录」则 token 存 `localStorage`，否则存 `sessionStorage`；
 - 路由守卫首次导航调用 `auth.bootstrap()`：先请求 `/me`，遇到 401 时只尝试一次 `/refresh`，
-  再失败就清空会话；`/console` 未登录会重定向到 `/login?redirect=<原路径>`；
-- 已登录访问 `/login` 会跳转 `/console`；`redirect` 只接受单斜杠开头的站内路径，防止开放重定向；
+  再失败就清空会话；未登录访问受保护路由会重定向到 `/login?redirect=<原路径>`；
+- 已登录访问 `/login` 会跳转 `/intro`；`redirect` 只接受单斜杠开头的站内路径，防止开放重定向；
 - 退出登录先尽力调用 `/logout` 吊销 refresh token，无论成败都清空本地会话；
-- 错误统一为 `BffError`（`invalid-credentials` / `forbidden` / `network` / `server` /
-  `session-expired` / `malformed-response`），页面按稳定错误码选择中文文案。
+- 错误统一为 `BffError`（`invalid-credentials` / `forbidden` / `not-found` / `conflict` /
+  `invalid-input` / `network` / `server` / `session-expired` / `malformed-response`），
+  页面按稳定错误码选择中文文案。
 
 ## 主题与样式
 

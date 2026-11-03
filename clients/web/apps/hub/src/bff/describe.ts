@@ -12,6 +12,7 @@ const OBJECT_RULES: readonly {
 }[] = [
   { key: 'profile', label: '账户资料', match: (pattern) => pattern === '/api/v1/auth/me' },
   { key: 'session', label: '登录会话', match: (pattern) => pattern === '/api/v1/auth/logout' },
+  { key: 'wallet', label: '钱包', match: (pattern) => pattern.startsWith('/api/v1/wallet') },
   { key: 'fde', label: 'FDE 订单', match: (pattern) => pattern.startsWith('/api/v1/fde') },
   { key: 'admin', label: '管理接口', match: (pattern) => pattern.startsWith('/api/v1/admin') },
   { key: 'business', label: '全部业务接口', match: (pattern) => pattern === '/api/v1/*' },
@@ -20,9 +21,10 @@ const OBJECT_RULES: readonly {
 const GROUP_ORDER: Readonly<Record<string, number>> = {
   profile: 0,
   session: 1,
-  fde: 2,
-  business: 3,
-  admin: 4,
+  wallet: 2,
+  fde: 3,
+  business: 4,
+  admin: 5,
 }
 
 const METHOD_LABELS: Readonly<Record<string, string>> = {

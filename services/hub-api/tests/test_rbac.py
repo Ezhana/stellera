@@ -106,8 +106,18 @@ def test_role_hierarchy_matches_expected_matrix(app, client: TestClient) -> None
     assert guard.enforce("role:authenticated", "/api/v1/fde/orders/mine", "GET") is True
     assert guard.enforce("role:authenticated", "/api/v1/fde/orders", "POST") is False
 
-    # 下线的 wallet / plaza / 旧 orders 不再授予任何业务角色权限（admin 通配除外）
-    assert guard.enforce("role:viewer", "/api/v1/wallet/balance", "GET") is False
+    # wallet：所有登录用户可读自己的钱包与流水、可兑换兑换码（在线充值永久关闭）
+    assert guard.enforce("anonymous", "/api/v1/wallet", "GET") is False
+    assert guard.enforce("role:authenticated", "/api/v1/wallet", "GET") is True
+    assert guard.enforce("role:authenticated", "/api/v1/wallet/transactions", "GET") is True
+    assert guard.enforce("role:authenticated", "/api/v1/wallet/redeem", "POST") is True
+    assert guard.enforce("role:viewer", "/api/v1/wallet", "GET") is True
+    assert guard.enforce("role:viewer", "/api/v1/wallet/transactions", "GET") is True
+    assert guard.enforce("role:viewer", "/api/v1/wallet/redeem", "POST") is True
+    assert guard.enforce("role:viewer", "/api/v1/wallet", "POST") is False
+    assert guard.enforce("role:engineer", "/api/v1/wallet/redeem", "POST") is True
+
+    # 下线的 plaza / 旧 orders 不再授予任何业务角色权限（admin 通配除外）
     assert guard.enforce("role:viewer", "/api/v1/plaza/feed", "GET") is False
     assert guard.enforce("role:viewer", "/api/v1/orders", "GET") is False
     assert guard.enforce("role:operator", "/api/v1/orders", "POST") is False
@@ -223,13 +233,15 @@ def test_me_permissions_follow_role_hierarchy(client: TestClient) -> None:
     me = client.get(f"{API_V1}/auth/me", headers=auth_headers(pair["access_token"])).json()
     permissions = {(item["object"], item["action"]) for item in me["permissions"]}
 
-    # viewer 只继承 authenticated：两个认证端点 + FDE 订单只读。
+    # viewer 只继承 authenticated：两个认证端点 + FDE 订单只读 + 钱包。
     assert ("/api/v1/auth/me", "^GET$") in permissions
     assert ("/api/v1/auth/logout", "^POST$") in permissions
     assert ("/api/v1/fde/orders", "^GET$") in permissions
     assert ("/api/v1/fde/orders/*", "^GET$") in permissions
-    # 已下线的 wallet / plaza / 旧 orders 不再出现在权限清单里。
-    assert ("/api/v1/wallet/*", "^GET$") not in permissions
+    assert ("/api/v1/wallet", "^GET$") in permissions
+    assert ("/api/v1/wallet/transactions", "^GET$") in permissions
+    assert ("/api/v1/wallet/redeem", "^POST$") in permissions
+    # 已下线的 plaza / 旧 orders 不再出现在权限清单里。
     assert ("/api/v1/orders", "^GET$") not in permissions
     assert ("/api/v1/plaza/*", "^GET$") not in permissions
     assert ("/api/v1/*", "^(POST|PUT|PATCH)$") not in permissions
