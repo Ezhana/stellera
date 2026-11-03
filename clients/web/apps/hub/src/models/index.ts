@@ -3,6 +3,8 @@ export type { NavGroup, NavLeaf, ResolvedNavLeaf } from './nav'
 export { CONSOLE_NAV, findNavGroupForRoute, navForViewer } from './nav'
 export type {
   BadgeTone,
+  Certification,
+  CertificationMeta,
   HubCapabilities,
   PermissionActionView,
   PermissionGroupView,
@@ -11,12 +13,22 @@ export type {
   ViewerProfile,
   ViewerStatus,
 } from './identity'
+export { CERTIFICATIONS, describeCertification } from './identity'
 export type {
+  ApplicationListFilter,
+  ApplicationListModel,
+  ApplicationsPageModel,
+  ApplicationStatus,
+  ApplicationStatusMeta,
+  ApplicationType,
+  ApplicationTypeMeta,
+  AssignedOrdersPageModel,
   EscrowStatus,
   FdeOrderDetailView,
   FdeOrderStatus,
   FdeOrderStatusMeta,
   FdeOrderView,
+  OrderApplicationView,
   OrderHallPageModel,
   OrderListFilter,
   OrderListModel,
@@ -24,7 +36,12 @@ export type {
   PublishedOrdersPageModel,
   WorkLogView,
 } from './orders'
-export { FDE_INDUSTRIES, FDE_ORDER_STATUSES } from './orders'
+export {
+  APPLICATION_STATUSES,
+  APPLICATION_TYPES,
+  FDE_INDUSTRIES,
+  FDE_ORDER_STATUSES,
+} from './orders'
 export type {
   RedeemResultView,
   WalletPageModel,

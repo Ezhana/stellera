@@ -1,6 +1,7 @@
 """认证端点。
 
-固定五个路由（/login 额外返回 user，省掉一次 /me 往返）：
+固定六个路由（/login、/register 额外返回 user，省掉一次 /me 往返）：
+- POST /api/v1/auth/register 公开注册（创建 member 账号并直接签发令牌）
 - POST /api/v1/auth/login   JSON 用户名密码
 - POST /api/v1/auth/token   OAuth2 password form（Swagger Authorize 用）
 - POST /api/v1/auth/refresh 旋转 refresh token
@@ -23,10 +24,17 @@ from app.schemas.auth import (
     LoginRequest,
     PermissionItem,
     RefreshRequest,
+    RegisterRequest,
     TokenResponse,
     UserResponse,
 )
-from app.services.auth import AuthenticationError, AuthService, CurrentUser, TokenPair
+from app.services.auth import (
+    AuthConflictError,
+    AuthenticationError,
+    AuthService,
+    CurrentUser,
+    TokenPair,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -73,6 +81,33 @@ def _unauthorized(detail: str) -> HTTPException:
         detail=detail,
         headers={"WWW-Authenticate": "Bearer", **NO_STORE_HEADERS},
     )
+
+
+@router.post(
+    "/register",
+    response_model=AuthResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def register(
+    payload: RegisterRequest,
+    response: Response,
+    session: SessionDep,
+    service: Annotated[AuthService, Depends(get_auth_service)],
+) -> AuthResponse:
+    """公开注册：创建会员账号并直接返回令牌，注册后可立即进入控制台。"""
+    try:
+        pair = await service.register(
+            session,
+            username=payload.username,
+            email=payload.email,
+            full_name=payload.full_name,
+            password=payload.password,
+        )
+        current = await service.resolve_user(session, pair.user_id)
+    except AuthConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.detail) from exc
+    response.headers.update(NO_STORE_HEADERS)
+    return _auth_response(pair, current)
 
 
 @router.post("/login", response_model=AuthResponse)

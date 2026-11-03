@@ -22,27 +22,21 @@ export const DEMO_ACCOUNTS: readonly DemoAccount[] = [
     password: 'admin12345',
   },
   {
+    role: '会员',
+    scope: '可发布/接单',
+    username: 'member',
+    password: 'member12345',
+  },
+  {
     role: '企业',
-    scope: '发布需求 / 确认交付',
+    scope: '发布需求 / 审批申请',
     username: 'enterprise',
     password: 'enterprise12345',
   },
   {
     role: '工程师',
-    scope: '认领订单 / 提交日志',
+    scope: '申请接单 / 提交交付',
     username: 'engineer',
     password: 'engineer12345',
-  },
-  {
-    role: '运营',
-    scope: '后台运营写操作',
-    username: 'operator',
-    password: 'operator12345',
-  },
-  {
-    role: '访客',
-    scope: '只读访问',
-    username: 'viewer',
-    password: 'viewer12345',
   },
 ]

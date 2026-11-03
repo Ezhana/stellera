@@ -51,6 +51,18 @@ export const CONSOLE_NAV: readonly NavGroup[] = [
         icon: 'orders',
         routeName: 'fde-published',
       },
+      {
+        key: 'fde-assigned',
+        label: '我接到的',
+        icon: 'wrench',
+        routeName: 'fde-assigned',
+      },
+      {
+        key: 'fde-applications',
+        label: '我的申请',
+        icon: 'logs',
+        routeName: 'fde-applications',
+      },
     ],
   },
   {

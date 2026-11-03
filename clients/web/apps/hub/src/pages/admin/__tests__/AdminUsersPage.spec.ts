@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { adminBff } from '@/bff/admin'
 import { buildAdminUserListModel, buildAdminUserView } from '@/bff/admin/__tests__/fixtures'
+import { BffError } from '@/bff/errors'
 import { buildViewer } from '@/bff/orders/__tests__/fixtures'
 import type { AdminRoleOption } from '@/models'
 import AdminUsersPage from '@/pages/admin/AdminUsersPage.vue'
@@ -15,6 +16,7 @@ vi.mock('@/bff/admin', () => ({
     listUsers: vi.fn(),
     listRoles: vi.fn(),
     updateUser: vi.fn(),
+    walletAdjustment: vi.fn(),
   },
 }))
 
@@ -22,15 +24,18 @@ const EmptyView = { template: '<div />' }
 
 const roleOptions: AdminRoleOption[] = [
   { key: 'admin', label: '管理员', tone: 'accent' },
-  { key: 'operator', label: '运营', tone: 'info' },
+  { key: 'member', label: '会员', tone: 'default' },
   { key: 'enterprise', label: '企业', tone: 'accent' },
+  { key: 'engineer', label: '工程师', tone: 'success' },
 ]
 
 const enterpriseUser = buildAdminUserView({
   id: '7',
   username: 'luna',
   displayName: 'Luna Chen',
+  fullName: 'Luna Chen',
   email: 'luna@example.com',
+  certification: 'enterprise',
   isActive: true,
   statusLabel: '已启用',
   roleKeys: ['enterprise'],
@@ -39,27 +44,29 @@ const enterpriseUser = buildAdminUserView({
   balanceLabel: '¥10,000',
 })
 
-const disabledUser = buildAdminUserView({
+const memberUser = buildAdminUserView({
   id: '8',
-  username: 'kane',
-  displayName: 'Kane',
+  username: 'member',
+  displayName: '会员（演示）',
+  fullName: '会员（演示）',
   email: null,
+  certification: null,
   isActive: false,
   statusLabel: '已停用',
-  roleKeys: ['operator'],
-  roles: [{ key: 'operator', label: '运营', tone: 'info' }],
+  roleKeys: ['member'],
+  roles: [{ key: 'member', label: '会员', tone: 'default' }],
   balanceCents: 0,
   balanceLabel: '¥0',
 })
 
 const adminViewer = buildViewer({
   isAdmin: true,
+  certification: null,
   roles: [{ key: 'admin', label: '管理员', tone: 'accent' }],
   capabilities: {
     publishOrder: true,
-    claimOrder: true,
+    applyOrder: true,
     submitOrderLog: true,
-    completeOrder: true,
     viewWallet: true,
     redeemCode: true,
     manageAdmin: true,
@@ -82,6 +89,8 @@ async function mountPage(): Promise<{ wrapper: VueWrapper; router: Router }> {
       { path: '/intro', name: 'intro', component: EmptyView },
       { path: '/fde/hall', name: 'fde-hall', component: EmptyView },
       { path: '/fde/published', name: 'fde-published', component: EmptyView },
+      { path: '/fde/assigned', name: 'fde-assigned', component: EmptyView },
+      { path: '/fde/applications', name: 'fde-applications', component: EmptyView },
       { path: '/wallet', name: 'wallet', component: EmptyView },
       { path: '/admin/users', name: 'admin-users', component: EmptyView },
       { path: '/admin/redeem-codes', name: 'admin-redeem-codes', component: EmptyView },
@@ -100,16 +109,26 @@ function findButton(wrapper: VueWrapper, label: string) {
   return wrapper.findAll('button').find((button) => button.text() === label)
 }
 
+async function openEditor(wrapper: VueWrapper): Promise<void> {
+  await findButton(wrapper, '编辑')?.trigger('click')
+  await flushPromises()
+}
+
 describe('AdminUsersPage', () => {
   beforeEach(() => {
     vi.mocked(adminBff.listRoles).mockResolvedValue(roleOptions)
     vi.mocked(adminBff.listUsers).mockResolvedValue(
-      buildAdminUserListModel([enterpriseUser, disabledUser]),
+      buildAdminUserListModel([enterpriseUser, memberUser]),
     )
     vi.mocked(adminBff.updateUser).mockResolvedValue(enterpriseUser)
+    vi.mocked(adminBff.walletAdjustment).mockResolvedValue({
+      ...enterpriseUser,
+      balanceCents: 1_050_000,
+      balanceLabel: '¥10,500',
+    })
   })
 
-  it('renders the user rows, roles and balances', async () => {
+  it('renders users with certification badges, roles, balances and role filter options', async () => {
     const { wrapper } = await mountPage()
 
     expect(adminBff.listUsers).toHaveBeenCalledWith({
@@ -122,13 +141,19 @@ describe('AdminUsersPage', () => {
     expect(wrapper.text()).toContain('Luna Chen')
     expect(wrapper.text()).toContain('@luna')
     expect(wrapper.text()).toContain('luna@example.com')
-    expect(wrapper.text()).toContain('企业')
+    expect(wrapper.text()).toContain('企业认证')
+    expect(wrapper.text()).toContain('未认证')
+    expect(wrapper.text()).toContain('会员')
     expect(wrapper.text()).toContain('¥10,000')
     expect(wrapper.text()).toContain('已停用')
     expect(wrapper.text()).toContain('共 2 位用户')
+    expect(findButton(wrapper, '调整角色')).toBeUndefined()
+
+    const options = wrapper.findAll('#user-role-filter option').map((node) => node.text())
+    expect(options).toEqual(['全部角色', '管理员', '会员', '企业', '工程师'])
   })
 
-  it('reloads the first page when searching', async () => {
+  it('reloads the first page when searching and filtering by role', async () => {
     const { wrapper } = await mountPage()
 
     await wrapper.find('input[name="user-search"]').setValue('luna')
@@ -142,42 +167,110 @@ describe('AdminUsersPage', () => {
       page: 1,
       pageSize: 20,
     })
-  })
 
-  it('saves an updated role set from the inline editor', async () => {
-    const { wrapper } = await mountPage()
-
-    await findButton(wrapper, '调整角色')?.trigger('click')
+    await wrapper.find('#user-role-filter').setValue('enterprise')
     await flushPromises()
 
-    const checkboxes = wrapper.findAll('input[type="checkbox"]')
-    expect(checkboxes).toHaveLength(3)
-    expect(wrapper.text()).toContain('调整「Luna Chen」的角色')
+    expect(adminBff.listUsers).toHaveBeenLastCalledWith({
+      q: 'luna',
+      role: 'enterprise',
+      page: 1,
+      pageSize: 20,
+    })
+  })
 
-    await checkboxes[0]!.setValue(true)
-    await findButton(wrapper, '保存角色')?.trigger('click')
+  it('saves the profile name, email and certification from the inline editor', async () => {
+    vi.mocked(adminBff.updateUser).mockResolvedValue({
+      ...enterpriseUser,
+      displayName: 'Luna Zhang',
+      fullName: 'Luna Zhang',
+      email: 'luna.zhang@example.com',
+      certification: 'engineer',
+    })
+    const { wrapper } = await mountPage()
+    await openEditor(wrapper)
+
+    expect(wrapper.text()).toContain('编辑「Luna Chen」的资料')
+
+    await wrapper.find('input[name="edit-full-name"]').setValue(' Luna Zhang ')
+    await wrapper.find('input[name="edit-email"]').setValue(' luna.zhang@example.com ')
+    await wrapper.find('#edit-certification').setValue('engineer')
+    await findButton(wrapper, '保存资料')?.trigger('click')
     await flushPromises()
 
     expect(adminBff.updateUser).toHaveBeenCalledWith('7', {
-      roles: ['enterprise', 'admin'],
+      fullName: 'Luna Zhang',
+      email: 'luna.zhang@example.com',
+      certification: 'engineer',
     })
+    expect(wrapper.text()).toContain('已保存 Luna Zhang 的资料与认证。')
     expect(adminBff.listUsers).toHaveBeenCalledTimes(2)
-    expect(wrapper.text()).toContain('已更新 Luna Chen 的角色。')
   })
 
-  it('refuses to save an empty role set', async () => {
+  it('validates the profile fields before calling the PATCH endpoint', async () => {
     const { wrapper } = await mountPage()
+    await openEditor(wrapper)
 
-    await findButton(wrapper, '调整角色')?.trigger('click')
+    await wrapper.find('input[name="edit-full-name"]').setValue('')
+    await wrapper.find('input[name="edit-email"]').setValue('not-an-email')
+    await findButton(wrapper, '保存资料')?.trigger('click')
     await flushPromises()
 
-    const checkboxes = wrapper.findAll('input[type="checkbox"]')
-    await checkboxes[2]!.setValue(false)
-    await findButton(wrapper, '保存角色')?.trigger('click')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('至少保留一个角色')
+    expect(wrapper.text()).toContain('请输入姓名')
+    expect(wrapper.text()).toContain('请输入有效的邮箱地址')
     expect(adminBff.updateUser).not.toHaveBeenCalled()
+  })
+
+  it('credits a user balance with yuan converted to cents', async () => {
+    const { wrapper } = await mountPage()
+    await openEditor(wrapper)
+
+    await wrapper.find('input[name="wallet-amount"]').setValue('100.50')
+    await wrapper.find('input[name="wallet-note"]').setValue('活动奖励')
+    await wrapper.find('form.admin-editor__grid').trigger('submit')
+    await flushPromises()
+
+    expect(adminBff.walletAdjustment).toHaveBeenCalledWith('7', {
+      direction: 'credit',
+      amountCents: 10_050,
+      note: '活动奖励',
+    })
+    expect(wrapper.text()).toContain('已为 Luna Chen 增加余额，当前余额 ¥10,500。')
+    expect(adminBff.listUsers).toHaveBeenCalledTimes(2)
+  })
+
+  it('debits a user balance and surfaces the backend overdraft conflict', async () => {
+    vi.mocked(adminBff.walletAdjustment).mockRejectedValue(
+      new BffError('conflict', '扣减金额超过可用余额', { status: 409 }),
+    )
+    const { wrapper } = await mountPage()
+    await openEditor(wrapper)
+
+    await wrapper.find('#wallet-direction').setValue('debit')
+    await wrapper.find('input[name="wallet-amount"]').setValue('20000')
+    await wrapper.find('input[name="wallet-note"]').setValue('退款')
+    await wrapper.find('form.admin-editor__grid').trigger('submit')
+    await flushPromises()
+
+    expect(adminBff.walletAdjustment).toHaveBeenCalledWith('7', {
+      direction: 'debit',
+      amountCents: 2_000_000,
+      note: '退款',
+    })
+    expect(wrapper.text()).toContain('扣减金额超过可用余额')
+    expect(adminBff.listUsers).toHaveBeenCalledTimes(1)
+  })
+
+  it('validates the balance adjustment amount and note', async () => {
+    const { wrapper } = await mountPage()
+    await openEditor(wrapper)
+
+    await wrapper.find('form.admin-editor__grid').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('请输入调整金额')
+    expect(wrapper.text()).toContain('请填写调整备注')
+    expect(adminBff.walletAdjustment).not.toHaveBeenCalled()
   })
 
   it('toggles a user status through the PATCH endpoint', async () => {

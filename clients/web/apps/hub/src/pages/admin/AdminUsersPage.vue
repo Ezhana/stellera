@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { z } from 'zod'
 
 import { adminBff } from '@/bff/admin'
+import type { AdminCertificationInput } from '@/bff/admin'
 import { BffError } from '@/bff/errors'
 import PageHeader from '@/components/console/PageHeader.vue'
+import CertificationMark from '@/components/identity/CertificationMark.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiButton from '@/components/ui/UiButton.vue'
-import UiCheckbox from '@/components/ui/UiCheckbox.vue'
 import UiChip from '@/components/ui/UiChip.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import ConsoleLayout from '@/layouts/ConsoleLayout.vue'
@@ -14,6 +16,13 @@ import type { AdminRoleOption, AdminUserView } from '@/models'
 import { useAuthStore } from '@/stores/auth'
 
 const PAGE_SIZE = 20
+
+/** Certification select options; `none` revokes the enterprise/engineer role on the backend. */
+const CERTIFICATION_OPTIONS: readonly { value: AdminCertificationInput; label: string }[] = [
+  { value: 'none', label: '未认证' },
+  { value: 'enterprise', label: '企业认证' },
+  { value: 'engineer', label: '工程师认证' },
+]
 
 const auth = useAuthStore()
 const viewer = computed(() => auth.viewer)
@@ -24,18 +33,50 @@ const page = ref(1)
 const loading = ref(true)
 const errorMessage = ref('')
 const successMessage = ref('')
+const actionError = ref('')
 
 const keyword = ref('')
 const roleFilter = ref('')
 const roleOptions = ref<AdminRoleOption[]>([])
 
-const expandedUserId = ref<string | null>(null)
-const selectedRoles = ref<string[]>([])
-const roleError = ref('')
-const savingRoles = ref(false)
+const editingUserId = ref<string | null>(null)
 const pendingUserId = ref<string | null>(null)
 
+const fullName = ref('')
+const email = ref('')
+const certification = ref<AdminCertificationInput>('none')
+const profileErrors = reactive<{ fullName?: string; email?: string }>({})
+const savingProfile = ref(false)
+
+const walletDirection = ref<'credit' | 'debit'>('credit')
+const walletAmountYuan = ref('')
+const walletNote = ref('')
+const walletErrors = reactive<{ amount?: string; note?: string; submit?: string }>({})
+const adjustingWallet = ref(false)
+
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
+
+const profileSchema = z.object({
+  fullName: z.string().trim().min(1, '请输入姓名').max(128, '姓名长度不能超过 128 个字符'),
+  email: z
+    .string()
+    .trim()
+    .min(1, '请输入邮箱')
+    .max(128, '邮箱长度不能超过 128 个字符')
+    .email('请输入有效的邮箱地址'),
+})
+
+const walletSchema = z.object({
+  amountYuan: z
+    .string()
+    .trim()
+    .min(1, '请输入调整金额')
+    .refine((value) => /^\d+(\.\d{1,2})?$/.test(value), '调整金额最多保留两位小数')
+    .transform((value) => Number(value))
+    .refine((value) => value > 0, '调整金额必须大于 0')
+    .refine((value) => Math.round(value * 100) <= 100_000_000, '单次调整金额不能超过 1,000,000 元'),
+  note: z.string().trim().min(1, '请填写调整备注').max(120, '备注长度不能超过 120 个字符'),
+})
 
 /** Map the BFF's stable error codes to admin copy; the page never inspects HTTP statuses. */
 function toErrorMessage(error: unknown, fallback: string): string {
@@ -66,7 +107,7 @@ async function loadRoles(): Promise<void> {
   try {
     roleOptions.value = await adminBff.listRoles()
   } catch (error) {
-    errorMessage.value = toErrorMessage(error, '角色列表加载失败，请稍后重试。')
+    actionError.value = toErrorMessage(error, '角色列表加载失败，请稍后重试。')
   }
 }
 
@@ -108,51 +149,113 @@ function changePage(delta: number): void {
   void loadUsers()
 }
 
-function closeRoleEditor(): void {
-  expandedUserId.value = null
-  selectedRoles.value = []
-  roleError.value = ''
+function resetWalletForm(): void {
+  walletDirection.value = 'credit'
+  walletAmountYuan.value = ''
+  walletNote.value = ''
+  walletErrors.amount = undefined
+  walletErrors.note = undefined
+  walletErrors.submit = undefined
 }
 
-function openRoleEditor(user: AdminUserView): void {
+function closeEditor(): void {
+  editingUserId.value = null
+  profileErrors.fullName = undefined
+  profileErrors.email = undefined
+  resetWalletForm()
+}
+
+function openEditor(user: AdminUserView): void {
   successMessage.value = ''
-  roleError.value = ''
-  if (expandedUserId.value === user.id) {
-    closeRoleEditor()
+  actionError.value = ''
+  if (editingUserId.value === user.id) {
+    closeEditor()
     return
   }
-  expandedUserId.value = user.id
-  selectedRoles.value = [...user.roleKeys]
+  editingUserId.value = user.id
+  fullName.value = user.fullName ?? user.displayName
+  email.value = user.email ?? ''
+  certification.value = user.certification ?? 'none'
+  profileErrors.fullName = undefined
+  profileErrors.email = undefined
+  resetWalletForm()
 }
 
-function setRole(roleKey: string, checked: boolean): void {
-  if (checked) {
-    if (!selectedRoles.value.includes(roleKey))
-      selectedRoles.value = [...selectedRoles.value, roleKey]
+async function saveProfile(user: AdminUserView): Promise<void> {
+  if (savingProfile.value) return
+  profileErrors.fullName = undefined
+  profileErrors.email = undefined
+
+  const parsed = profileSchema.safeParse({
+    fullName: fullName.value,
+    email: email.value,
+  })
+  if (!parsed.success) {
+    for (const issue of parsed.error.issues) {
+      const field = issue.path[0]
+      if (field === 'fullName' && !profileErrors.fullName) profileErrors.fullName = issue.message
+      if (field === 'email' && !profileErrors.email) profileErrors.email = issue.message
+    }
     return
   }
-  selectedRoles.value = selectedRoles.value.filter((key) => key !== roleKey)
-}
 
-async function saveRoles(user: AdminUserView): Promise<void> {
-  if (savingRoles.value) return
-  if (selectedRoles.value.length === 0) {
-    roleError.value = '至少保留一个角色'
-    return
-  }
-
-  roleError.value = ''
+  savingProfile.value = true
   successMessage.value = ''
-  savingRoles.value = true
+  actionError.value = ''
   try {
-    await adminBff.updateUser(user.id, { roles: selectedRoles.value })
-    successMessage.value = `已更新 ${user.displayName} 的角色。`
-    closeRoleEditor()
+    await adminBff.updateUser(user.id, {
+      fullName: parsed.data.fullName,
+      email: parsed.data.email,
+      certification: certification.value,
+    })
+    successMessage.value = `已保存 ${parsed.data.fullName} 的资料与认证。`
+    closeEditor()
     await loadUsers(false)
   } catch (error) {
-    roleError.value = toErrorMessage(error, '角色更新失败，请稍后重试。')
+    actionError.value = toErrorMessage(error, '用户资料保存失败，请稍后重试。')
   } finally {
-    savingRoles.value = false
+    savingProfile.value = false
+  }
+}
+
+async function adjustWallet(user: AdminUserView): Promise<void> {
+  if (adjustingWallet.value) return
+  walletErrors.amount = undefined
+  walletErrors.note = undefined
+  walletErrors.submit = undefined
+
+  const parsed = walletSchema.safeParse({
+    amountYuan: walletAmountYuan.value,
+    note: walletNote.value,
+  })
+  if (!parsed.success) {
+    for (const issue of parsed.error.issues) {
+      const field = issue.path[0]
+      if (field === 'amountYuan' && !walletErrors.amount) walletErrors.amount = issue.message
+      if (field === 'note' && !walletErrors.note) walletErrors.note = issue.message
+    }
+    return
+  }
+
+  adjustingWallet.value = true
+  successMessage.value = ''
+  actionError.value = ''
+  try {
+    const updated = await adminBff.walletAdjustment(user.id, {
+      direction: walletDirection.value,
+      amountCents: Math.round(parsed.data.amountYuan * 100),
+      note: parsed.data.note,
+    })
+    const verb = walletDirection.value === 'credit' ? '增加' : '扣减'
+    successMessage.value = `已为 ${user.displayName} ${verb}余额，当前余额 ${updated.balanceLabel}。`
+    resetWalletForm()
+    await loadUsers(false)
+  } catch (error) {
+    const message = toErrorMessage(error, '余额调整失败，请稍后重试。')
+    walletErrors.submit = message
+    actionError.value = message
+  } finally {
+    adjustingWallet.value = false
   }
 }
 
@@ -160,7 +263,7 @@ async function toggleUserActive(user: AdminUserView): Promise<void> {
   if (pendingUserId.value) return
   const activating = !user.isActive
   pendingUserId.value = user.id
-  errorMessage.value = ''
+  actionError.value = ''
   successMessage.value = ''
 
   try {
@@ -168,7 +271,7 @@ async function toggleUserActive(user: AdminUserView): Promise<void> {
     successMessage.value = `已${activating ? '启用' : '停用'} ${user.displayName}。`
     await loadUsers(false)
   } catch (error) {
-    errorMessage.value = toErrorMessage(error, '用户状态更新失败，请稍后重试。')
+    actionError.value = toErrorMessage(error, '用户状态更新失败，请稍后重试。')
   } finally {
     pendingUserId.value = null
   }
@@ -185,7 +288,7 @@ onMounted(async () => {
       <PageHeader
         eyebrow="ADMIN · USERS"
         title="用户管理"
-        description="搜索用户、调整角色与启用状态，变更立即生效。"
+        description="编辑用户资料、认证与启用状态，并为用户调整钱包余额。"
       >
         <template #actions>
           <UiButton variant="secondary" size="sm" :loading="loading" @click="loadUsers()">
@@ -202,6 +305,16 @@ onMounted(async () => {
         @close="successMessage = ''"
       >
         {{ successMessage }}
+      </UiAlert>
+
+      <UiAlert
+        v-if="actionError"
+        variant="error"
+        title="操作失败"
+        dismissible
+        @close="actionError = ''"
+      >
+        {{ actionError }}
       </UiAlert>
 
       <section class="admin-panel">
@@ -250,6 +363,7 @@ onMounted(async () => {
                 <tr>
                   <th scope="col">用户</th>
                   <th scope="col">邮箱</th>
+                  <th scope="col">认证</th>
                   <th scope="col">角色</th>
                   <th scope="col">余额</th>
                   <th scope="col">状态</th>
@@ -273,6 +387,13 @@ onMounted(async () => {
                     </td>
                     <td class="admin-table__cell admin-table__cell--muted">
                       {{ user.email ?? '未登记邮箱' }}
+                    </td>
+                    <td class="admin-table__cell">
+                      <CertificationMark
+                        v-if="user.certification"
+                        :certification="user.certification"
+                      />
+                      <span v-else class="admin-table__cell--muted">未认证</span>
                     </td>
                     <td class="admin-table__cell">
                       <div v-if="user.roles.length" class="admin-user__roles">
@@ -303,43 +424,123 @@ onMounted(async () => {
                         >
                           {{ user.isActive ? '停用' : '启用' }}
                         </UiButton>
-                        <UiButton variant="ghost" size="sm" @click="openRoleEditor(user)">
-                          {{ expandedUserId === user.id ? '收起角色' : '调整角色' }}
+                        <UiButton variant="ghost" size="sm" @click="openEditor(user)">
+                          {{ editingUserId === user.id ? '收起编辑' : '编辑' }}
                         </UiButton>
                       </div>
                     </td>
                   </tr>
 
-                  <tr v-if="expandedUserId === user.id" class="admin-table__row--editor">
-                    <td class="admin-table__cell" colspan="7">
-                      <div class="admin-role-editor">
-                        <p class="admin-role-editor__title">调整「{{ user.displayName }}」的角色</p>
-                        <div class="admin-role-editor__options">
-                          <UiCheckbox
-                            v-for="role in roleOptions"
-                            :key="role.key"
-                            :model-value="selectedRoles.includes(role.key)"
-                            :label="role.label"
-                            :disabled="savingRoles"
-                            @update:model-value="(checked) => setRole(role.key, Boolean(checked))"
-                          />
-                        </div>
-                        <p v-if="roleError" class="admin-role-editor__error" role="alert">
-                          {{ roleError }}
-                        </p>
-                        <div class="admin-role-editor__actions">
-                          <UiButton size="sm" :loading="savingRoles" @click="saveRoles(user)">
-                            保存角色
-                          </UiButton>
-                          <UiButton
-                            variant="ghost"
-                            size="sm"
-                            :disabled="savingRoles"
-                            @click="closeRoleEditor"
+                  <tr v-if="editingUserId === user.id" class="admin-table__row--editor">
+                    <td class="admin-table__cell" colspan="8">
+                      <div class="admin-editor">
+                        <section class="admin-editor__section" aria-label="用户资料">
+                          <p class="admin-editor__title">编辑「{{ user.displayName }}」的资料</p>
+                          <div class="admin-editor__grid">
+                            <UiInput
+                              v-model="fullName"
+                              label="姓名"
+                              name="edit-full-name"
+                              :maxlength="128"
+                              :error="profileErrors.fullName"
+                              :disabled="savingProfile"
+                            />
+                            <UiInput
+                              v-model="email"
+                              label="邮箱"
+                              name="edit-email"
+                              type="email"
+                              :maxlength="128"
+                              :error="profileErrors.email"
+                              :disabled="savingProfile"
+                            />
+                            <div class="admin-editor__field">
+                              <label class="admin-editor__label" for="edit-certification">
+                                认证
+                              </label>
+                              <select
+                                id="edit-certification"
+                                v-model="certification"
+                                class="admin-select"
+                                :disabled="savingProfile"
+                              >
+                                <option
+                                  v-for="option in CERTIFICATION_OPTIONS"
+                                  :key="option.value"
+                                  :value="option.value"
+                                >
+                                  {{ option.label }}
+                                </option>
+                              </select>
+                              <p class="admin-editor__help">
+                                认证即授予企业/工程师角色，选择未认证会取消对应角色。
+                              </p>
+                            </div>
+                          </div>
+                          <div class="admin-editor__actions">
+                            <UiButton size="sm" :loading="savingProfile" @click="saveProfile(user)">
+                              保存资料
+                            </UiButton>
+                            <UiButton
+                              variant="ghost"
+                              size="sm"
+                              :disabled="savingProfile"
+                              @click="closeEditor"
+                            >
+                              取消
+                            </UiButton>
+                          </div>
+                        </section>
+
+                        <section class="admin-editor__section" aria-label="余额调整">
+                          <p class="admin-editor__title">余额调整</p>
+                          <p class="admin-editor__help">
+                            当前余额 {{ user.balanceLabel }}；扣减金额不能超过可用余额。
+                          </p>
+                          <form
+                            class="admin-editor__grid"
+                            novalidate
+                            @submit.prevent="adjustWallet(user)"
                           >
-                            取消
-                          </UiButton>
-                        </div>
+                            <div class="admin-editor__field">
+                              <label class="admin-editor__label" for="wallet-direction">
+                                方向
+                              </label>
+                              <select
+                                id="wallet-direction"
+                                v-model="walletDirection"
+                                class="admin-select"
+                                :disabled="adjustingWallet"
+                              >
+                                <option value="credit">增加余额</option>
+                                <option value="debit">扣减余额</option>
+                              </select>
+                            </div>
+                            <UiInput
+                              v-model="walletAmountYuan"
+                              label="金额 / 元"
+                              name="wallet-amount"
+                              inputmode="decimal"
+                              placeholder="100.00"
+                              :error="walletErrors.amount"
+                              :disabled="adjustingWallet"
+                            />
+                            <UiInput
+                              v-model="walletNote"
+                              label="备注"
+                              name="wallet-note"
+                              placeholder="例如：活动奖励 / 退款补偿"
+                              :maxlength="120"
+                              :error="walletErrors.note"
+                              :disabled="adjustingWallet"
+                            />
+                            <div class="admin-editor__actions admin-editor__actions--inline">
+                              <UiButton type="submit" size="sm" :loading="adjustingWallet">
+                                提交调整
+                              </UiButton>
+                            </div>
+                          </form>
+                        </section>
                       </div>
                     </td>
                   </tr>
@@ -456,7 +657,7 @@ onMounted(async () => {
 
 .admin-table {
   width: 100%;
-  min-width: 64rem;
+  min-width: 72rem;
   border-collapse: collapse;
   font-family: var(--font-family-sans);
   font-size: var(--font-size-small);
@@ -558,32 +759,60 @@ onMounted(async () => {
   background-color: var(--color-bg-subtle);
 }
 
-.admin-role-editor {
-  display: flex;
-  flex-direction: column;
-  gap: var(--primitive-space-3);
+.admin-editor {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--primitive-space-6);
   padding: var(--primitive-space-3) var(--primitive-space-2);
 }
 
-.admin-role-editor__title {
+.admin-editor__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--primitive-space-3);
+  min-width: 0;
+}
+
+.admin-editor__title {
   color: var(--color-fg-strong);
   font-weight: var(--font-weight-medium);
 }
 
-.admin-role-editor__options {
+.admin-editor__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--primitive-space-3);
+}
+
+.admin-editor__field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.admin-editor__label {
+  margin-bottom: var(--primitive-space-1);
+  color: var(--color-fg-muted);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.2;
+}
+
+.admin-editor__help {
+  color: var(--color-fg-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+}
+
+.admin-editor__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--primitive-space-4);
-}
-
-.admin-role-editor__error {
-  color: var(--color-danger);
-  font-size: var(--font-size-caption);
-}
-
-.admin-role-editor__actions {
-  display: flex;
+  align-items: center;
   gap: var(--primitive-space-2);
+}
+
+.admin-editor__actions--inline {
+  align-self: end;
 }
 
 .admin-empty {
@@ -611,5 +840,17 @@ onMounted(async () => {
 .admin-pagination__actions {
   display: flex;
   gap: var(--primitive-space-2);
+}
+
+@media (max-width: 1024px) {
+  .admin-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .admin-editor__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 </style>

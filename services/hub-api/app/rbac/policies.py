@@ -10,6 +10,7 @@ from __future__ import annotations
 PUBLIC_POLICIES: tuple[tuple[str, str, str], ...] = (
     ("anonymous", "/health", "GET"),
     ("anonymous", "/health/ready", "GET"),
+    ("anonymous", "/api/v1/auth/register", "POST"),
     ("anonymous", "/api/v1/auth/login", "POST"),
     ("anonymous", "/api/v1/auth/token", "POST"),
     ("anonymous", "/api/v1/auth/refresh", "POST"),

@@ -1,24 +1,22 @@
 import type { HubCapabilities, PermissionGroupView, RoleView, ViewerProfile } from '@/models'
 
+import { certificationFromRoles } from '../certification'
 import { actionOrder, describeActions, describeObject, groupOrder } from '../describe'
 import { permissionAllows, type PermissionLike } from '../permissions'
 import type { PermissionDto, UserDto } from './dto'
 
 const ROLE_META: Readonly<Record<string, { label: string; tone: RoleView['tone'] }>> = {
   admin: { label: '管理员', tone: 'accent' },
-  operator: { label: '运营', tone: 'info' },
+  member: { label: '会员', tone: 'default' },
   enterprise: { label: '企业', tone: 'accent' },
   engineer: { label: '工程师', tone: 'success' },
-  viewer: { label: '只读成员', tone: 'default' },
-  authenticated: { label: '已认证', tone: 'default' },
 }
 
 /** Concrete probe paths for the viewer capabilities; the backend policies use the same prefixes. */
 const CAPABILITY_PROBES = {
   publishOrder: { path: '/api/v1/fde/orders', method: 'POST' },
-  claimOrder: { path: '/api/v1/fde/orders/1/claim', method: 'POST' },
+  applyOrder: { path: '/api/v1/fde/orders/1/applications', method: 'POST' },
   submitOrderLog: { path: '/api/v1/fde/orders/1/logs', method: 'POST' },
-  completeOrder: { path: '/api/v1/fde/orders/1/complete', method: 'POST' },
   viewWallet: { path: '/api/v1/wallet', method: 'GET' },
   redeemCode: { path: '/api/v1/wallet/redeem', method: 'POST' },
   manageAdmin: { path: '/api/v1/admin/users', method: 'GET' },
@@ -48,6 +46,7 @@ export function toViewerProfile(user: UserDto): ViewerProfile {
     status,
     statusLabel: status === 'active' ? '已启用' : '已停用',
     isAdmin: roles.some((role) => role.key === 'admin'),
+    certification: certificationFromRoles(user.roles),
     roles,
     permissionGroups: toPermissionGroups(permissions),
     permissionCount: permissions.length,
@@ -101,20 +100,15 @@ function toCapabilities(permissions: readonly PermissionLike[]): HubCapabilities
       CAPABILITY_PROBES.publishOrder.path,
       CAPABILITY_PROBES.publishOrder.method,
     ),
-    claimOrder: permissionAllows(
+    applyOrder: permissionAllows(
       permissions,
-      CAPABILITY_PROBES.claimOrder.path,
-      CAPABILITY_PROBES.claimOrder.method,
+      CAPABILITY_PROBES.applyOrder.path,
+      CAPABILITY_PROBES.applyOrder.method,
     ),
     submitOrderLog: permissionAllows(
       permissions,
       CAPABILITY_PROBES.submitOrderLog.path,
       CAPABILITY_PROBES.submitOrderLog.method,
-    ),
-    completeOrder: permissionAllows(
-      permissions,
-      CAPABILITY_PROBES.completeOrder.path,
-      CAPABILITY_PROBES.completeOrder.method,
     ),
     viewWallet: permissionAllows(
       permissions,

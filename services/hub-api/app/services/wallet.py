@@ -24,6 +24,7 @@ TRANSACTION_TYPE_REDEEM = "redeem"
 TRANSACTION_TYPE_ORDER_PAYMENT = "order_payment"
 TRANSACTION_TYPE_ORDER_REFUND = "order_refund"
 TRANSACTION_TYPE_ORDER_SETTLEMENT = "order_settlement"
+TRANSACTION_TYPE_ADJUSTMENT = "adjustment"
 
 DIRECTION_CREDIT = "credit"
 DIRECTION_DEBIT = "debit"
@@ -188,12 +189,17 @@ async def _sum_cents(
 
 
 async def get_summary(session: AsyncSession, user_id: int) -> WalletSummary:
-    """钱包汇总：支出合计按 debit 计，收入按 settlement / recharge / redeem 分类。"""
+    """钱包汇总：用量只统计订单托管支出，管理员调整不算用量。"""
     wallet = await get_or_create_wallet(session, user_id)
     settings = await get_settings_map(session)
     return WalletSummary(
         balance_cents=wallet.balance_cents,
-        usage_total_cents=await _sum_cents(session, wallet.id, direction=DIRECTION_DEBIT),
+        usage_total_cents=await _sum_cents(
+            session,
+            wallet.id,
+            direction=DIRECTION_DEBIT,
+            types=(TRANSACTION_TYPE_ORDER_PAYMENT,),
+        ),
         recharge_total_cents=await _sum_cents(
             session, wallet.id, direction=DIRECTION_CREDIT, types=(TRANSACTION_TYPE_RECHARGE,)
         ),
@@ -310,6 +316,7 @@ __all__ = [
     "REDEEM_STATUS_DISABLED",
     "REDEEM_STATUS_USED",
     "REFERENCE_TYPE_FDE_ORDER",
+    "TRANSACTION_TYPE_ADJUSTMENT",
     "TRANSACTION_TYPE_ORDER_PAYMENT",
     "TRANSACTION_TYPE_ORDER_REFUND",
     "TRANSACTION_TYPE_ORDER_SETTLEMENT",

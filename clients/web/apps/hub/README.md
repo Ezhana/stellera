@@ -4,10 +4,12 @@ STELLERA HUB 的 Console 前端：登录页 + 控制台外壳，视觉使用 `@e
 （Obsidian & Gold 黑金商务风、Inter 正文 + Playfair Display 标题、暗色单模式）。页面通过前端内的 BFF/页面模型层消费后端数据，
 组件不直接绑定后端 DTO 或原始权限字段。
 
-当前范围是登录与身份、平台简介、FDE 订单（大厅 / 我发布的）、钱包（余额 / 用量 / 充值 / 兑换码）
-以及超级管理员的管理后台（用户 / 兑换码 / 系统设置）。页面全部通过 BFF/页面模型层消费后端数据，
-组件不直接绑定后端 DTO 或原始权限字段。钱包与 FDE 的资金闭环（发布扣款、取消退款、完成结算）
-在 `hub-api` 中实现，前端只负责展示与操作。
+当前范围是登录/注册与身份、平台简介、FDE 订单（大厅 / 我发布的 / 我接到的 / 我的申请）、
+钱包（余额 / 用量 / 充值 / 兑换码）以及超级管理员的管理后台（用户 / 兑换码 / 系统设置）。
+角色为 `member`（注册即会员）、`enterprise` / `engineer`（认证身份，前端展示认证 badge）与 `admin`；
+所有登录用户都能发布订单、申请接单和申请交付，接单/交付由订单发布者审批。
+页面全部通过 BFF/页面模型层消费后端数据，组件不直接绑定后端 DTO 或原始权限字段。
+钱包与 FDE 的资金闭环（发布扣款、取消退款、交付结算）在 `hub-api` 中实现，前端只负责展示与操作。
 更完整的架构取舍见 [`docs/adr/0002-frontend-bff-page-models.md`](../../../docs/adr/0002-frontend-bff-page-models.md)。
 
 ## 技术栈
@@ -23,24 +25,26 @@ STELLERA HUB 的 Console 前端：登录页 + 控制台外壳，视觉使用 `@e
 ```text
 src/
 ├── models/                 # 稳定的页面模型（前端拥有，不出现后端字段）
-│   ├── identity.ts         # ViewerProfile / SessionView / HubCapabilities / 权限分组
+│   ├── identity.ts         # ViewerProfile / SessionView / 认证 Certification / 权限分组
 │   ├── nav.ts              # 前端拥有的两级导航树 + navForViewer（管理组仅 admin）
-│   ├── orders.ts           # FDE 订单页面模型与状态目录
+│   ├── orders.ts           # FDE 订单 / 接单与交付申请页面模型
 │   ├── wallet.ts           # 钱包汇总 / 流水 / 兑换结果页面模型
 │   ├── admin.ts            # 管理后台用户 / 兑换码 / 系统设置页面模型
 │   └── icons.ts            # UiIcon 支持的图标名
 ├── bff/                    # 前端 BFF：DTO 校验、映射、聚合、错误归一化
-│   ├── auth/               # AuthBff：登录/恢复/刷新/登出 + SessionView
-│   ├── orders/             # OrdersBff：订单大厅、发布、认领、日志、完成/取消、WebSocket
+│   ├── auth/               # AuthBff：注册/登录/恢复/刷新/登出 + SessionView
+│   ├── orders/             # OrdersBff：订单大厅、发布、申请/审批、日志、我接到的、WebSocket
 │   ├── wallet/             # WalletBff：钱包汇总、流水分页、兑换码入账
-│   ├── admin/              # AdminBff：用户、角色目录、兑换码、系统设置
+│   ├── admin/              # AdminBff：用户编辑/认证/余额调整、角色目录、兑换码、系统设置
+│   ├── certification.ts    # 角色/接口 certification 归一化
 │   ├── token-provider.ts   # 各 feature BFF 共用的 access token 端口
 │   ├── permissions.ts      # 前端权限匹配（keyMatch2/regex 子集）
 │   ├── describe.ts         # 原始 policy -> 中文分组/动作标签
 │   └── errors.ts           # BffError 稳定错误码（context：login/session/refresh/orders/wallet/admin）
+├── components/identity/    # CertificationMark 认证标识
 ├── components/ui/          # Obsidian 组件层（Button/Input/Checkbox/Card/Chip/Alert/BrandMark/Icon）
 ├── layouts/                # AuthLayout（品牌面板 + 表单）、ConsoleLayout（侧栏 + 内容）
-├── pages/                  # Login / PlatformIntro / fde/* / wallet/* / admin/* / NotFound
+├── pages/                  # Login / Register / PlatformIntro / fde/* / wallet/* / admin/* / NotFound
 ├── router/index.ts         # 路由与登录守卫（bootstrap + redirect + requiresAdmin）
 ├── stores/auth.ts          # 很薄的会话状态：只持有 SessionView
 ├── lib/http.ts             # 通用 JSON transport：ApiError、超时、base URL
@@ -71,7 +75,9 @@ feature BFF（token 注入、请求编排、错误归一化）
   未知交易类型 / 兑换码状态 / 角色都有降级标签，后端新增枚举值不会让页面崩溃。
 - 权限展示不直接渲染正则：`permissions.ts` + `describe.ts` 把 `/api/v1/wallet`、
   `^(GET|POST)$` 这类 policy 映射为「钱包 · 查看/创建」，原始路径只作为次要信息保留。
-- `HubCapabilities` 由 auth BFF 用权限探针派生（发布订单、认领、钱包、兑换码、管理后台），页面只分支布尔值。
+- `HubCapabilities` 由 auth BFF 用权限探针派生（发布订单、申请订单、日志、钱包、兑换码、管理后台），页面只分支布尔值。
+- 认证标识：`CertificationMark` 根据后端返回的 `certification`（enterprise / engineer / null）渲染，
+  用于侧边栏、订单发布者/接单工程师、管理端用户与申请列表。
 - 导航树由前端拥有，`navForViewer({ isAdmin })` 过滤 `requiresAdmin` 分组；
   管理端路由带 `requiresAdmin` meta，非 admin 会被守卫重定向回 `/intro`。
 
@@ -101,16 +107,17 @@ pnpm --filter hub preview     # 预览构建产物
 
 后端契约（FastAPI，RBAC；前端由 BFF 消费）：
 
-| 方法 | 路径                   | 请求 / 响应                                                                              |
-| ---- | ---------------------- | ---------------------------------------------------------------------------------------- |
-| POST | `/api/v1/auth/login`   | `{username, password}` → `{access_token, refresh_token, token_type, expires_in, user}`。 |
-| POST | `/api/v1/auth/refresh` | `{refresh_token}` → 新的 token pair。                                                    |
-| GET  | `/api/v1/auth/me`      | Bearer token → `user {id, username, email, full_name, is_active, roles, permissions}`。  |
-| POST | `/api/v1/auth/logout`  | `{refresh_token}`，尽力而为地吊销刷新令牌。                                              |
+| 方法 | 路径                    | 请求 / 响应                                                                              |
+| ---- | ----------------------- | ---------------------------------------------------------------------------------------- |
+| POST | `/api/v1/auth/register` | `{username, email, full_name, password}` → 201，注册即 member，返回与登录同构的会话。    |
+| POST | `/api/v1/auth/login`    | `{username, password}` → `{access_token, refresh_token, token_type, expires_in, user}`。 |
+| POST | `/api/v1/auth/refresh`  | `{refresh_token}` → 新的 token pair。                                                    |
+| GET  | `/api/v1/auth/me`       | Bearer token → `user {id, username, email, full_name, is_active, roles, permissions}`。  |
+| POST | `/api/v1/auth/logout`   | `{refresh_token}`，尽力而为地吊销刷新令牌。                                              |
 
 会话行为（由 `AuthBff` 负责）：
 
-- 登录时勾选「保持登录」则 token 存 `localStorage`，否则存 `sessionStorage`；
+- 登录时勾选「保持登录」则 token 存 `localStorage`，否则存 `sessionStorage`；注册成功后自动登录（会话）；
 - 路由守卫首次导航调用 `auth.bootstrap()`：先请求 `/me`，遇到 401 时只尝试一次 `/refresh`，
   再失败就清空会话；未登录访问受保护路由会重定向到 `/login?redirect=<原路径>`；
 - 已登录访问 `/login` 会跳转 `/intro`；`redirect` 只接受单斜杠开头的站内路径，防止开放重定向；

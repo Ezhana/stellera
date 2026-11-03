@@ -35,7 +35,8 @@ class Wallet(TimestampMixin, Base):
 
 
 class WalletTransaction(Base):
-    """一条资金流水：recharge / redeem / order_payment / order_refund / order_settlement。"""
+    """一条资金流水：recharge / redeem / order_payment / order_refund /
+    order_settlement / adjustment。"""
 
     __tablename__ = "wallet_transactions"
 
@@ -43,7 +44,7 @@ class WalletTransaction(Base):
     wallet_id: Mapped[int] = mapped_column(
         ForeignKey("wallets.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    # recharge / redeem / order_payment / order_refund / order_settlement。
+    # recharge / redeem / order_payment / order_refund / order_settlement / adjustment。
     type: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
     # credit（入账）/ debit（出账）。
     direction: Mapped[str] = mapped_column(String(8), nullable=False)

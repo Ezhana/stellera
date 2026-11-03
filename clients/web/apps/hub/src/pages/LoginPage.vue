@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { z } from 'zod'
 
 import { BffError } from '@/bff/errors'
@@ -202,7 +202,12 @@ function fillDemoAccount(account: DemoAccount): void {
         </ul>
       </section>
 
-      <p class="login-card__footnote">账号由管理员分配；如需开通权限，请联系 IT 管理员。</p>
+      <p class="login-card__footnote">
+        没有账号？
+        <RouterLink class="login-card__link" :to="{ name: 'register' }">注册</RouterLink>
+        <span class="login-card__footnote-sep" aria-hidden="true">·</span>
+        账号由管理员分配；如需开通权限，请联系 IT 管理员。
+      </p>
     </UiCard>
   </AuthLayout>
 </template>
@@ -360,6 +365,19 @@ function fillDemoAccount(account: DemoAccount): void {
   color: var(--obsidian-tertiary-text);
   font-size: var(--font-size-caption);
   line-height: var(--font-line-height-caption);
+}
+
+.login-card__link {
+  color: var(--color-accent-hover);
+  font-weight: var(--font-weight-medium);
+}
+
+.login-card__link:hover {
+  color: var(--color-accent);
+}
+
+.login-card__footnote-sep {
+  margin: 0 var(--primitive-space-1);
 }
 
 /* 移动端：卡片至少两列，用户名/密码保持单行可读。 */

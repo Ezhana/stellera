@@ -37,8 +37,10 @@ describe('admin mapper users', () => {
       id: 'u-1',
       username: 'luna',
       displayName: 'Luna Chen',
+      fullName: 'Luna Chen',
       initials: 'LC',
       email: 'luna@example.com',
+      certification: 'enterprise',
       isActive: true,
       statusLabel: '已启用',
       roleKeys: ['enterprise', 'engineer'],
@@ -60,15 +62,24 @@ describe('admin mapper users', () => {
         email: null,
         is_active: false,
         roles: ['admin', 'mystery_role', 'admin'],
+        certification: 'vip',
       }),
     )
 
     expect(view.displayName).toBe('ghost')
+    expect(view.fullName).toBeNull()
     expect(view.initials).toBe('GH')
     expect(view.email).toBeNull()
+    expect(view.certification).toBeNull()
     expect(view.statusLabel).toBe('已停用')
     expect(view.roleKeys).toEqual(['admin', 'mystery_role'])
     expect(view.roles[1]).toEqual({ key: 'mystery_role', label: 'mystery_role', tone: 'default' })
+  })
+
+  it('derives the certification from roles when the backend omits it', () => {
+    const view = toAdminUserView(buildAdminUserDto({ roles: ['engineer'], certification: null }))
+
+    expect(view.certification).toBe('engineer')
   })
 
   it('maps a user list and falls back to the loaded length for total', () => {

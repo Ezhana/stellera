@@ -1,10 +1,13 @@
-"""管理后台业务逻辑：用户与角色、兑换码、角色目录。
+"""管理后台业务逻辑：用户编辑与余额调整、兑换码、角色目录。
 
 所有写操作都集中在这里做校验与保护，端点只负责 HTTP 语义与权限投影刷新。
+角色不再通过接口整体覆写：认证状态仅由 certification 字段在
+enterprise / engineer 两个认证角色之间切换，admin 角色不受影响。
 """
 
 from __future__ import annotations
 
+import re
 import secrets
 import string
 from dataclasses import dataclass
@@ -21,16 +24,26 @@ from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.models.wallet import Wallet
 from app.rbac.enforcer import AUTHENTICATED_ROLE, load_user_role_names
+from app.services import wallet as wallet_service
+from app.services.certification import (
+    CERTIFICATION_ROLES,
+    certification_from_roles,
+)
 from app.services.wallet import REDEEM_STATUS_ACTIVE, REDEEM_STATUS_USED
 
 ADMIN_ROLE = "admin"
+MEMBER_ROLE = "member"
 
 # 管理端展示顺序；authenticated 是自动基线，不出现在角色目录里。
-ROLE_DISPLAY_ORDER: tuple[str, ...] = ("admin", "operator", "viewer", "enterprise", "engineer")
+ROLE_DISPLAY_ORDER: tuple[str, ...] = (MEMBER_ROLE, "enterprise", "engineer", ADMIN_ROLE)
 
 # 兑换码去掉易混字符 I/O/0/1，避免人工输入时看错。
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 BATCH_ALPHABET = string.ascii_uppercase + string.digits
+
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+CERTIFICATION_NONE = "none"
 
 
 class AdminError(Exception):
@@ -42,19 +55,20 @@ class AdminNotFoundError(AdminError):
 
 
 class AdminConflictError(AdminError):
-    """与保护规则冲突（停用自己、移除最后管理员等），对应 HTTP 409。"""
+    """与保护规则冲突（停用自己、移除最后管理员、邮箱占用等），对应 HTTP 409。"""
 
 
 class AdminValidationError(AdminError):
-    """参数不合法（未知角色等），对应 HTTP 422。"""
+    """参数不合法（邮箱格式、认证状态等），对应 HTTP 422。"""
 
 
 @dataclass(frozen=True)
 class AdminUserItem:
-    """管理端用户列表项：用户 + 角色列表 + 钱包余额。"""
+    """管理端用户列表项：用户 + 角色列表 + 认证状态 + 钱包余额。"""
 
     user: User
     roles: tuple[str, ...]
+    certification: str | None
     balance_cents: int
 
 
@@ -132,11 +146,20 @@ async def _wallet_balance(session: AsyncSession, user_id: int) -> int:
     return int(balance or 0)
 
 
-async def _user_item(session: AsyncSession, user: User) -> AdminUserItem:
+def _user_item_from(user: User, roles: tuple[str, ...], balance_cents: int) -> AdminUserItem:
     return AdminUserItem(
         user=user,
-        roles=_sort_roles(await load_user_role_names(session, user.id)),
-        balance_cents=await _wallet_balance(session, user.id),
+        roles=roles,
+        certification=certification_from_roles(roles),
+        balance_cents=balance_cents,
+    )
+
+
+async def _user_item(session: AsyncSession, user: User) -> AdminUserItem:
+    return _user_item_from(
+        user,
+        _sort_roles(await load_user_role_names(session, user.id)),
+        await _wallet_balance(session, user.id),
     )
 
 
@@ -184,12 +207,7 @@ async def list_users(
 
     roles_by_user = await _roles_by_user(session, [row[0].id for row in rows])
     items = tuple(
-        AdminUserItem(
-            user=row[0],
-            roles=roles_by_user.get(row[0].id, ()),
-            balance_cents=int(row[1]),
-        )
-        for row in rows
+        _user_item_from(row[0], roles_by_user.get(row[0].id, ()), int(row[1])) for row in rows
     )
     return AdminUserPage(items=items, total=total, page=page, page_size=page_size)
 
@@ -220,49 +238,100 @@ async def _admin_count(session: AsyncSession) -> int:
     ).scalar_one()
 
 
+async def _apply_certification(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    certification: str,
+) -> None:
+    """在 enterprise / engineer 两个认证角色之间切换，并确保 member 基线角色。"""
+    if certification not in (CERTIFICATION_NONE, *CERTIFICATION_ROLES):
+        raise AdminValidationError("认证状态不合法")
+
+    certification_roles = {
+        role.name: role.id
+        for role in (
+            await session.execute(select(Role).where(Role.name.in_(CERTIFICATION_ROLES)))
+        ).scalars()
+    }
+    if len(certification_roles) != len(CERTIFICATION_ROLES):
+        raise AdminValidationError("认证角色未初始化")
+    member_role_id = (
+        await session.execute(select(Role.id).where(Role.name == MEMBER_ROLE))
+    ).scalar_one_or_none()
+    if member_role_id is None:
+        raise AdminValidationError("member 角色未初始化")
+
+    # 认证角色只由本接口维护：先全部移除，再加目标角色（none 表示撤销认证）。
+    await session.execute(
+        delete(UserRole).where(
+            UserRole.user_id == user_id,
+            UserRole.role_id.in_(certification_roles.values()),
+        )
+    )
+    existing_role_ids = set(
+        (
+            await session.execute(select(UserRole.role_id).where(UserRole.user_id == user_id))
+        ).scalars()
+    )
+    if certification != CERTIFICATION_NONE:
+        session.add(UserRole(user_id=user_id, role_id=certification_roles[certification]))
+    if member_role_id not in existing_role_ids:
+        session.add(UserRole(user_id=user_id, role_id=member_role_id))
+    await session.flush()
+
+
 async def update_user(
     session: AsyncSession,
     *,
     actor_id: int,
     user_id: int,
+    full_name: str | None = None,
+    email: str | None = None,
     is_active: bool | None = None,
-    roles: list[str] | None = None,
+    certification: str | None = None,
 ) -> AdminUserItem:
-    """更新用户状态与角色，并施加“不能停用自己 / 不能移除最后管理员”等保护。"""
+    """更新用户资料 / 启用状态 / 认证状态，并施加管理员保护规则。
+
+    角色不再整体改写：admin 角色保持原样，认证状态只切换 enterprise / engineer。
+    """
     user = await session.get(User, user_id)
     if user is None:
         raise AdminNotFoundError("用户不存在")
+    if full_name is None and email is None and is_active is None and certification is None:
+        raise AdminValidationError("至少需要修改一项")
 
     current_roles = set(await load_user_role_names(session, user_id))
-    requested_roles: list[str] | None = None
-    roles_by_name: dict[str, Role] = {}
-    if roles is not None:
-        # authenticated 是登录后的自动基线，不落 user_roles。
-        requested_roles = list(dict.fromkeys(name for name in roles if name != AUTHENTICATED_ROLE))
-        if requested_roles:
-            fetched = (
-                (await session.execute(select(Role).where(Role.name.in_(requested_roles))))
-                .scalars()
-                .all()
+
+    if full_name is not None:
+        normalized_name = full_name.strip()
+        if not 1 <= len(normalized_name) <= 128:
+            raise AdminValidationError("姓名长度需在 1-128 个字符之间")
+        user.full_name = normalized_name
+
+    if email is not None:
+        normalized_email = email.strip().lower()
+        if not EMAIL_PATTERN.fullmatch(normalized_email):
+            raise AdminValidationError("邮箱格式不正确")
+        conflict = (
+            await session.execute(
+                select(User.id)
+                .where(
+                    func.lower(User.email) == normalized_email,
+                    User.id != user_id,
+                )
+                .limit(1)
             )
-            roles_by_name = {role.name: role for role in fetched}
-            if len(roles_by_name) != len(requested_roles):
-                raise AdminValidationError("存在无效角色")
+        ).scalar_one_or_none()
+        if conflict is not None:
+            raise AdminConflictError("邮箱已被注册")
+        user.email = normalized_email
 
     if actor_id == user_id and is_active is False:
         raise AdminConflictError("不能停用当前登录账号")
-    if actor_id == user_id and requested_roles is not None and ADMIN_ROLE not in requested_roles:
-        raise AdminConflictError("不能移除自己的管理员角色")
-    loses_admin = ADMIN_ROLE in current_roles and (
-        is_active is False or (requested_roles is not None and ADMIN_ROLE not in requested_roles)
-    )
+    loses_admin = ADMIN_ROLE in current_roles and is_active is False
     if loses_admin and await _admin_count(session) <= 1:
         raise AdminConflictError("不能移除最后一个管理员")
-
-    if requested_roles is not None:
-        await session.execute(delete(UserRole).where(UserRole.user_id == user_id))
-        for name in requested_roles:
-            session.add(UserRole(user_id=user_id, role_id=roles_by_name[name].id))
     if is_active is not None:
         user.is_active = is_active
         if not is_active:
@@ -275,6 +344,49 @@ async def update_user(
                 )
                 .values(revoked_at=utcnow())
             )
+
+    if certification is not None:
+        await _apply_certification(session, user_id=user_id, certification=certification)
+
+    await session.commit()
+    return await _user_item(session, user)
+
+
+async def adjust_user_wallet(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    direction: str,
+    amount_cents: int,
+    note: str,
+) -> AdminUserItem:
+    """管理员余额调整：写一条 adjustment 流水，余额只随流水变化。"""
+    user = await session.get(User, user_id)
+    if user is None:
+        raise AdminNotFoundError("用户不存在")
+    wallet = await wallet_service.get_or_create_wallet(session, user_id, for_update=True)
+    description = f"管理员调整：{note.strip()}"
+    if direction == wallet_service.DIRECTION_CREDIT:
+        await wallet_service.credit(
+            session,
+            wallet,
+            amount_cents,
+            type=wallet_service.TRANSACTION_TYPE_ADJUSTMENT,
+            description=description,
+        )
+    elif direction == wallet_service.DIRECTION_DEBIT:
+        try:
+            await wallet_service.debit(
+                session,
+                wallet,
+                amount_cents,
+                type=wallet_service.TRANSACTION_TYPE_ADJUSTMENT,
+                description=description,
+            )
+        except wallet_service.WalletConflictError as exc:
+            raise AdminConflictError("余额不足，无法扣减") from exc
+    else:
+        raise AdminValidationError("调整方向不合法")
     await session.commit()
     return await _user_item(session, user)
 
@@ -425,6 +537,7 @@ __all__ = [
     "AdminValidationError",
     "RedeemCodeBatch",
     "RoleOption",
+    "adjust_user_wallet",
     "create_redeem_codes",
     "list_redeem_codes",
     "list_roles",

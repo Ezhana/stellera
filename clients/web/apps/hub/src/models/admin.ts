@@ -1,12 +1,14 @@
-import type { BadgeTone, RoleView } from './identity'
+import type { BadgeTone, Certification, RoleView } from './identity'
 
 /** A user row in the admin console. */
 export interface AdminUserView {
   id: string
   username: string
   displayName: string
+  fullName: string | null
   initials: string
   email: string | null
+  certification: Certification
   isActive: boolean
   statusLabel: string
   roleKeys: string[]

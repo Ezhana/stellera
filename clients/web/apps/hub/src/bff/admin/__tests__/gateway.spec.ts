@@ -66,16 +66,55 @@ describe('HttpAdminGateway', () => {
     expect(mockedRequest).toHaveBeenNthCalledWith(2, '/admin/settings', { token: 'token-1' })
   })
 
-  it('patches a user with the snake_case body', async () => {
+  it('patches a user with the snake_case body (no role editing)', async () => {
     mockedRequest.mockResolvedValueOnce(buildAdminUserDto({ is_active: false }))
 
-    await gateway.updateUser('token-1', '7', { isActive: false, roles: ['operator'] })
+    await gateway.updateUser('token-1', '7', {
+      fullName: 'Luna Chen',
+      email: 'luna@example.com',
+      isActive: false,
+      certification: 'engineer',
+    })
 
     expect(mockedRequest).toHaveBeenCalledWith('/admin/users/7', {
       method: 'PATCH',
       token: 'token-1',
-      body: { is_active: false, roles: ['operator'] },
+      body: {
+        full_name: 'Luna Chen',
+        email: 'luna@example.com',
+        is_active: false,
+        certification: 'engineer',
+      },
     })
+  })
+
+  it('only sends the provided patch fields', async () => {
+    mockedRequest.mockResolvedValueOnce(buildAdminUserDto())
+
+    await gateway.updateUser('token-1', '7', { isActive: true })
+
+    expect(mockedRequest).toHaveBeenCalledWith('/admin/users/7', {
+      method: 'PATCH',
+      token: 'token-1',
+      body: { is_active: true },
+    })
+  })
+
+  it('posts a wallet adjustment with the snake_case body', async () => {
+    mockedRequest.mockResolvedValueOnce(buildAdminUserDto({ balance_cents: 1_050_000 }))
+
+    const user = await gateway.walletAdjustment('token-1', '7', {
+      direction: 'credit',
+      amountCents: 50_000,
+      note: '活动奖励',
+    })
+
+    expect(mockedRequest).toHaveBeenCalledWith('/admin/users/7/wallet-adjustments', {
+      method: 'POST',
+      token: 'token-1',
+      body: { direction: 'credit', amount_cents: 50_000, note: '活动奖励' },
+    })
+    expect(user.balance_cents).toBe(1_050_000)
   })
 
   it('lists redeem codes with status, keyword and pagination', async () => {

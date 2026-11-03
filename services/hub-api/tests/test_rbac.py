@@ -1,4 +1,4 @@
-"""RBAC：401/403 区分、角色继承、路径归一化与 OPTIONS 放行。"""
+"""RBAC：401/403 区分、角色继承、公开注册与权限清单。"""
 
 from __future__ import annotations
 
@@ -14,13 +14,50 @@ from tests.conftest import (
     ENGINEER_USERNAME,
     ENTERPRISE_PASSWORD,
     ENTERPRISE_USERNAME,
-    OPERATOR_PASSWORD,
-    OPERATOR_USERNAME,
-    VIEWER_PASSWORD,
-    VIEWER_USERNAME,
+    MEMBER_PASSWORD,
+    MEMBER_USERNAME,
     auth_headers,
     login,
 )
+
+BUSINESS_PERMISSIONS = {
+    ("/api/v1/auth/me", "^GET$"),
+    ("/api/v1/auth/logout", "^POST$"),
+    ("/api/v1/wallet", "^GET$"),
+    ("/api/v1/wallet/transactions", "^GET$"),
+    ("/api/v1/wallet/redeem", "^POST$"),
+    ("/api/v1/fde/orders", "^GET$"),
+    ("/api/v1/fde/orders/*", "^GET$"),
+    ("/api/v1/fde/orders", "^POST$"),
+    ("/api/v1/fde/orders/*/cancel", "^POST$"),
+    ("/api/v1/fde/orders/*/logs", "^POST$"),
+    ("/api/v1/fde/orders/*/applications", "^POST$"),
+    ("/api/v1/fde/applications/mine", "^GET$"),
+    ("/api/v1/fde/applications/received", "^GET$"),
+    ("/api/v1/fde/applications/*/approve", "^POST$"),
+    ("/api/v1/fde/applications/*/reject", "^POST$"),
+    ("/api/v1/fde/applications/*/withdraw", "^POST$"),
+}
+
+# 用真实 HTTP 方法与代表性路径验证 Casbin 矩阵（策略 action 是 ^GET$ 形式的正则）。
+BUSINESS_ENDPOINTS = {
+    ("GET", "/api/v1/auth/me"),
+    ("POST", "/api/v1/auth/logout"),
+    ("GET", "/api/v1/wallet"),
+    ("GET", "/api/v1/wallet/transactions"),
+    ("POST", "/api/v1/wallet/redeem"),
+    ("GET", "/api/v1/fde/orders"),
+    ("GET", "/api/v1/fde/orders/1"),
+    ("POST", "/api/v1/fde/orders"),
+    ("POST", "/api/v1/fde/orders/1/cancel"),
+    ("POST", "/api/v1/fde/orders/1/logs"),
+    ("POST", "/api/v1/fde/orders/1/applications"),
+    ("GET", "/api/v1/fde/applications/mine"),
+    ("GET", "/api/v1/fde/applications/received"),
+    ("POST", "/api/v1/fde/applications/1/approve"),
+    ("POST", "/api/v1/fde/applications/1/reject"),
+    ("POST", "/api/v1/fde/applications/1/withdraw"),
+}
 
 
 @pytest.mark.parametrize(
@@ -46,10 +83,10 @@ def test_unauthenticated_gets_401(client: TestClient) -> None:
 
 
 def test_authenticated_but_forbidden_gets_403(client: TestClient) -> None:
-    pair = login(client, VIEWER_USERNAME, VIEWER_PASSWORD)
+    pair = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
 
-    # viewer 只有读权限；发布需求是 enterprise 的写权限，已认证但无权限。
-    response = client.post(f"{API_V1}/fde/orders", headers=auth_headers(pair["access_token"]))
+    # member 没有管理端通配权限：已认证但无权限。
+    response = client.get(f"{API_V1}/admin/ping", headers=auth_headers(pair["access_token"]))
 
     assert response.status_code == 403
     assert response.json()["detail"] == "Forbidden"
@@ -91,135 +128,107 @@ def test_cors_preflight_from_known_origin(client: TestClient) -> None:
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
 
 
+def test_anonymous_can_register_but_not_use_business_api(app, client: TestClient) -> None:
+    guard: EnforcerGuard = app.state.enforcer_guard
+
+    assert guard.enforce("anonymous", "/api/v1/auth/register", "POST") is True
+    assert guard.enforce("anonymous", "/api/v1/auth/login", "POST") is True
+    assert guard.enforce("anonymous", "/api/v1/auth/me", "GET") is False
+    assert guard.enforce("anonymous", "/api/v1/wallet", "GET") is False
+    assert guard.enforce("anonymous", "/api/v1/fde/orders", "GET") is False
+
+    response = client.post(
+        f"{API_V1}/auth/register",
+        json={
+            "username": "rbac_register",
+            "email": "rbac_register@example.com",
+            "full_name": "RBAC 注册",
+            "password": "secret123",
+        },
+    )
+    assert response.status_code == 201
+
+
 def test_role_hierarchy_matches_expected_matrix(app, client: TestClient) -> None:
     # client fixture 用于触发 lifespan（把 PG/SQLite 中的 RBAC 投影到 enforcer）。
     guard: EnforcerGuard = app.state.enforcer_guard
 
-    # 匿名只能访问公开端点
-    assert guard.enforce("anonymous", "/api/v1/auth/login", "POST") is True
-    assert guard.enforce("anonymous", "/api/v1/auth/me", "GET") is False
+    # 角色树：authenticated -> member -> enterprise / engineer / admin。
+    for role_name in ("authenticated", "member", "enterprise", "engineer", "admin"):
+        assert guard.enforce(f"role:{role_name}", "/api/v1/auth/me", "GET") is True
+    for retired in ("viewer", "operator"):
+        assert guard.enforce(f"role:{retired}", "/api/v1/auth/me", "GET") is False
 
-    # 所有登录用户都被归入 authenticated（auth/me、auth/logout 与 FDE 订单只读）
-    assert guard.enforce("role:authenticated", "/api/v1/auth/me", "GET") is True
-    assert guard.enforce("role:authenticated", "/api/v1/auth/logout", "POST") is True
-    assert guard.enforce("role:authenticated", "/api/v1/fde/orders", "GET") is True
-    assert guard.enforce("role:authenticated", "/api/v1/fde/orders/mine", "GET") is True
-    assert guard.enforce("role:authenticated", "/api/v1/fde/orders", "POST") is False
+    # authenticated 拥有全部业务端点（服务层再做归属判断）。
+    for method, path in BUSINESS_ENDPOINTS:
+        assert guard.enforce("role:authenticated", path, method) is True, (method, path)
+        assert guard.enforce("role:member", path, method) is True, (method, path)
+        assert guard.enforce("role:enterprise", path, method) is True, (method, path)
+        assert guard.enforce("role:engineer", path, method) is True, (method, path)
 
-    # wallet：所有登录用户可读自己的钱包与流水、可兑换兑换码（在线充值永久关闭）
-    assert guard.enforce("anonymous", "/api/v1/wallet", "GET") is False
-    assert guard.enforce("role:authenticated", "/api/v1/wallet", "GET") is True
-    assert guard.enforce("role:authenticated", "/api/v1/wallet/transactions", "GET") is True
-    assert guard.enforce("role:authenticated", "/api/v1/wallet/redeem", "POST") is True
-    assert guard.enforce("role:viewer", "/api/v1/wallet", "GET") is True
-    assert guard.enforce("role:viewer", "/api/v1/wallet/transactions", "GET") is True
-    assert guard.enforce("role:viewer", "/api/v1/wallet/redeem", "POST") is True
-    assert guard.enforce("role:viewer", "/api/v1/wallet", "POST") is False
-    assert guard.enforce("role:engineer", "/api/v1/wallet/redeem", "POST") is True
+    # 已移除的旧认领 / 完成端点不再有任何策略（admin 通配除外）。
+    assert guard.enforce("role:authenticated", "/api/v1/fde/orders/1/claim", "POST") is False
+    assert guard.enforce("role:authenticated", "/api/v1/fde/orders/1/complete", "POST") is False
 
-    # 下线的 plaza / 旧 orders 不再授予任何业务角色权限（admin 通配除外）
-    assert guard.enforce("role:viewer", "/api/v1/plaza/feed", "GET") is False
-    assert guard.enforce("role:viewer", "/api/v1/orders", "GET") is False
-    assert guard.enforce("role:operator", "/api/v1/orders", "POST") is False
-    assert guard.enforce("role:operator", "/api/v1/plaza/feed", "POST") is False
-
-    # viewer / operator 通过 authenticated 继承 FDE 订单只读，但没有写权限
-    assert guard.enforce("role:viewer", "/api/v1/fde/orders", "GET") is True
-    assert guard.enforce("role:viewer", "/api/v1/fde/orders/1", "GET") is True
-    assert guard.enforce("role:viewer", "/api/v1/fde/orders", "POST") is False
-    assert guard.enforce("role:viewer", "/api/v1/fde/orders/1/claim", "POST") is False
-    assert guard.enforce("role:operator", "/api/v1/fde/orders", "GET") is True
-    assert guard.enforce("role:operator", "/api/v1/fde/orders/1/claim", "POST") is False
-    assert guard.enforce("role:operator", "/api/v1/fde/orders/1/complete", "POST") is False
-    assert guard.enforce("role:operator", "/api/v1/admin/ping", "GET") is False
-
-    # admin 继承 operator，并且拥有全部方法（管理端仍无路由，放行后 404）
+    # 管理端：admin 通配；其它角色即使继承了全部业务端点也进不去管理端。
     assert guard.enforce("role:admin", "/api/v1/admin/users", "GET") is True
     assert guard.enforce("role:admin", "/api/v1/fde/orders", "DELETE") is True
-
-    # FDE 订单模块：enterprise / engineer 各自拥有专属写操作
-    assert guard.enforce("role:enterprise", "/api/v1/fde/orders", "POST") is True
-    assert guard.enforce("role:enterprise", "/api/v1/fde/orders/1/complete", "POST") is True
-    assert guard.enforce("role:enterprise", "/api/v1/fde/orders/1/cancel", "POST") is True
-    assert guard.enforce("role:enterprise", "/api/v1/fde/orders/1/claim", "POST") is False
-    assert guard.enforce("role:enterprise", "/api/v1/fde/orders/1/logs", "POST") is False
-    assert guard.enforce("role:engineer", "/api/v1/fde/orders/1/claim", "POST") is True
-    assert guard.enforce("role:engineer", "/api/v1/fde/orders/1/logs", "POST") is True
-    assert guard.enforce("role:engineer", "/api/v1/fde/orders", "POST") is False
-    assert guard.enforce("role:engineer", "/api/v1/fde/orders/1/complete", "POST") is False
-    assert guard.enforce("role:admin", "/api/v1/fde/orders/1/logs", "POST") is True
+    assert guard.enforce("role:member", "/api/v1/admin/users", "GET") is False
+    assert guard.enforce("role:enterprise", "/api/v1/admin/users", "GET") is False
 
 
-def test_fde_roles_can_use_their_own_endpoints(client: TestClient, app) -> None:
-    enterprise = login(client, ENTERPRISE_USERNAME, ENTERPRISE_PASSWORD)
-    engineer = login(client, ENGINEER_USERNAME, ENGINEER_PASSWORD)
+@pytest.mark.parametrize(
+    ("username", "password"),
+    [
+        (MEMBER_USERNAME, MEMBER_PASSWORD),
+        (ENGINEER_USERNAME, ENGINEER_PASSWORD),
+        (ENTERPRISE_USERNAME, ENTERPRISE_PASSWORD),
+    ],
+)
+def test_all_logged_in_roles_can_publish_and_apply(
+    client: TestClient, username: str, password: str
+) -> None:
+    pair = login(client, username, password)
 
-    # enterprise 可以发布需求（201），但不能认领。
+    # 任何登录用户都可以发布订单（余额足够）。
     published = client.post(
         f"{API_V1}/fde/orders",
-        headers=auth_headers(enterprise["access_token"]),
+        headers=auth_headers(pair["access_token"]),
         json={
             "title": "RBAC 矩阵验证订单",
             "industry": "医疗健康",
             "description": "",
             "delivery_days": 3,
-            "price_cents": 1000,
+            "price_cents": 10_000,
         },
     )
-    assert published.status_code == 201
-    order_id = published.json()["id"]
+    assert published.status_code == 201, published.text
+
+    # 任何登录用户都可以申请别人的订单（服务层再判归属与状态）。
+    admin = login(client)
     assert (
         client.post(
-            f"{API_V1}/fde/orders/{order_id}/claim",
-            headers=auth_headers(enterprise["access_token"]),
+            f"{API_V1}/fde/orders/{published.json()['id']}/applications",
+            headers=auth_headers(admin["access_token"]),
+            json={"type": "accept"},
         ).status_code
-        == 403
+        == 201
     )
 
-    # engineer 可以认领，但不能发布。
-    assert (
-        client.post(
-            f"{API_V1}/fde/orders/{order_id}/claim",
-            headers=auth_headers(engineer["access_token"]),
-        ).status_code
-        == 200
-    )
-    assert (
-        client.post(
-            f"{API_V1}/fde/orders",
-            headers=auth_headers(engineer["access_token"]),
-            json={
-                "title": "工程师越权发布",
-                "industry": "医疗健康",
-                "description": "",
-                "delivery_days": 1,
-                "price_cents": 1,
-            },
-        ).status_code
-        == 403
-    )
+    # 工作日志 / 审批权限由服务层判断，Casbin 不按角色拦截。
+    assert client.post(
+        f"{API_V1}/fde/orders/{published.json()['id']}/logs",
+        headers=auth_headers(pair["access_token"]),
+        json={"content": "服务层会拒绝"},
+    ).status_code in {403, 409}
 
 
-def test_admin_can_reach_admin_namespace(client: TestClient, app) -> None:
-    # 管理端还没有具体端点：Casbin 放行后由路由返回 404，而不是 401/403。
+def test_admin_can_reach_admin_namespace(client: TestClient) -> None:
+    # 未注册的管理端路径：Casbin 放行后由路由返回 404，而不是 401/403。
     pair = login(client)
     response = client.get(f"{API_V1}/admin/ping", headers=auth_headers(pair["access_token"]))
 
     assert response.status_code == 404
-
-
-def test_operator_cannot_delete_admin_resource(client: TestClient) -> None:
-    pair = login(client, OPERATOR_USERNAME, OPERATOR_PASSWORD)
-    response = client.delete(f"{API_V1}/admin/ping", headers=auth_headers(pair["access_token"]))
-
-    assert response.status_code == 403
-
-
-def test_viewer_cannot_read_admin_namespace(client: TestClient) -> None:
-    pair = login(client, VIEWER_USERNAME, VIEWER_PASSWORD)
-    response = client.get(f"{API_V1}/admin/ping", headers=auth_headers(pair["access_token"]))
-
-    assert response.status_code == 403
 
 
 def test_admin_login_username_constant_is_admin() -> None:
@@ -228,48 +237,24 @@ def test_admin_login_username_constant_is_admin() -> None:
 
 
 def test_me_permissions_follow_role_hierarchy(client: TestClient) -> None:
-    pair = login(client, VIEWER_USERNAME, VIEWER_PASSWORD)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
+    admin = login(client)
 
-    me = client.get(f"{API_V1}/auth/me", headers=auth_headers(pair["access_token"])).json()
-    permissions = {(item["object"], item["action"]) for item in me["permissions"]}
+    member_me = client.get(f"{API_V1}/auth/me", headers=auth_headers(member["access_token"])).json()
+    member_permissions = {(item["object"], item["action"]) for item in member_me["permissions"]}
+    assert member_me["roles"] == ["member"]
+    assert member_permissions == BUSINESS_PERMISSIONS
 
-    # viewer 只继承 authenticated：两个认证端点 + FDE 订单只读 + 钱包。
-    assert ("/api/v1/auth/me", "^GET$") in permissions
-    assert ("/api/v1/auth/logout", "^POST$") in permissions
-    assert ("/api/v1/fde/orders", "^GET$") in permissions
-    assert ("/api/v1/fde/orders/*", "^GET$") in permissions
-    assert ("/api/v1/wallet", "^GET$") in permissions
-    assert ("/api/v1/wallet/transactions", "^GET$") in permissions
-    assert ("/api/v1/wallet/redeem", "^POST$") in permissions
-    # 已下线的 plaza / 旧 orders 不再出现在权限清单里。
-    assert ("/api/v1/orders", "^GET$") not in permissions
-    assert ("/api/v1/plaza/*", "^GET$") not in permissions
-    assert ("/api/v1/*", "^(POST|PUT|PATCH)$") not in permissions
-
-
-def test_me_permissions_include_fde_role_grants(client: TestClient) -> None:
-    enterprise = login(client, ENTERPRISE_USERNAME, ENTERPRISE_PASSWORD)
-    engineer = login(client, ENGINEER_USERNAME, ENGINEER_PASSWORD)
-
-    enterprise_permissions = {
-        (item["object"], item["action"])
-        for item in client.get(
-            f"{API_V1}/auth/me", headers=auth_headers(enterprise["access_token"])
-        ).json()["permissions"]
-    }
-    engineer_permissions = {
-        (item["object"], item["action"])
-        for item in client.get(
-            f"{API_V1}/auth/me", headers=auth_headers(engineer["access_token"])
-        ).json()["permissions"]
-    }
-
-    assert ("/api/v1/fde/orders", "^POST$") in enterprise_permissions
-    assert ("/api/v1/fde/orders/*/complete", "^POST$") in enterprise_permissions
-    assert ("/api/v1/fde/orders/*/claim", "^POST$") not in enterprise_permissions
-    assert ("/api/v1/fde/orders/*/claim", "^POST$") in engineer_permissions
-    assert ("/api/v1/fde/orders/*/logs", "^POST$") in engineer_permissions
-    assert ("/api/v1/fde/orders", "^POST$") not in engineer_permissions
+    admin_me = client.get(f"{API_V1}/auth/me", headers=auth_headers(admin["access_token"])).json()
+    admin_permissions = {(item["object"], item["action"]) for item in admin_me["permissions"]}
+    assert admin_me["roles"] == ["admin"]
+    # 16 条业务权限 + admin 通配 = 17 条。
+    assert len(admin_permissions) == 17
+    assert ("/api/v1/*", "^(GET|POST|PUT|PATCH|DELETE)$") in admin_permissions
+    assert BUSINESS_PERMISSIONS <= admin_permissions
+    # 历史角色 / 认领完成端点不再出现。
+    assert ("/api/v1/fde/orders/*/claim", "^POST$") not in admin_permissions
+    assert ("/api/v1/fde/orders/*/complete", "^POST$") not in admin_permissions
 
 
 def test_login_user_matches_me(client: TestClient) -> None:

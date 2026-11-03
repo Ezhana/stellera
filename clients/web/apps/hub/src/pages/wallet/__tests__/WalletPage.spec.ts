@@ -91,6 +91,8 @@ async function mountPage(): Promise<{ wrapper: VueWrapper; router: Router }> {
       { path: '/intro', name: 'intro', component: EmptyView },
       { path: '/fde/hall', name: 'fde-hall', component: EmptyView },
       { path: '/fde/published', name: 'fde-published', component: EmptyView },
+      { path: '/fde/assigned', name: 'fde-assigned', component: EmptyView },
+      { path: '/fde/applications', name: 'fde-applications', component: EmptyView },
       { path: '/wallet', name: 'wallet', component: EmptyView },
     ],
   })

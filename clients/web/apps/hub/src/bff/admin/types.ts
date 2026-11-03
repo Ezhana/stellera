@@ -8,10 +8,22 @@ export interface AdminUserFilter {
   pageSize?: number
 }
 
-/** Payload for toggling a user's status or replacing its role set. */
+/** Certification value accepted by the PATCH endpoint; `none` revokes the role. */
+export type AdminCertificationInput = 'none' | 'enterprise' | 'engineer'
+
+/** Payload for editing a user's profile/status or granting a certification. */
 export interface UpdateAdminUserInput {
+  fullName?: string
+  email?: string | null
   isActive?: boolean
-  roles?: string[]
+  certification?: AdminCertificationInput
+}
+
+/** Payload for an admin balance adjustment; amounts travel in integer cents. */
+export interface AdminWalletAdjustmentInput {
+  direction: 'credit' | 'debit'
+  amountCents: number
+  note: string
 }
 
 export interface AdminRedeemCodeFilter {

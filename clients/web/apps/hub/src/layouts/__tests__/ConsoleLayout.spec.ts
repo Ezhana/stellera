@@ -23,14 +23,14 @@ const enterpriseViewer: ViewerProfile = {
   status: 'active',
   statusLabel: '已启用',
   isAdmin: false,
+  certification: 'enterprise',
   roles: [{ key: 'enterprise', label: '企业', tone: 'accent' }],
   permissionGroups: [],
   permissionCount: 0,
   capabilities: {
     publishOrder: true,
-    claimOrder: false,
-    submitOrderLog: false,
-    completeOrder: true,
+    applyOrder: true,
+    submitOrderLog: true,
     viewWallet: true,
     redeemCode: true,
     manageAdmin: false,
@@ -42,6 +42,7 @@ const adminViewer: ViewerProfile = {
   username: 'admin',
   displayName: '系统管理员',
   isAdmin: true,
+  certification: null,
   roles: [{ key: 'admin', label: '管理员', tone: 'accent' }],
   capabilities: { ...enterpriseViewer.capabilities, manageAdmin: true },
 }
@@ -59,6 +60,8 @@ async function mountLayout(
       { path: '/intro', name: 'intro', component: EmptyView },
       { path: '/fde/hall', name: 'fde-hall', component: EmptyView },
       { path: '/fde/published', name: 'fde-published', component: EmptyView },
+      { path: '/fde/assigned', name: 'fde-assigned', component: EmptyView },
+      { path: '/fde/applications', name: 'fde-applications', component: EmptyView },
       { path: '/wallet', name: 'wallet', component: EmptyView },
       { path: '/admin/users', name: 'admin-users', component: EmptyView },
       { path: '/admin/redeem-codes', name: 'admin-redeem-codes', component: EmptyView },
@@ -92,7 +95,14 @@ describe('ConsoleLayout', () => {
     const links = wrapper.findAll('.console-layout__nav-item')
     const labels = links.map((node) => node.text().replace(/\s+/g, ''))
     expect(labels).toEqual(
-      expect.arrayContaining(['平台简介', '订单大厅实时', '我发布的', '我的钱包']),
+      expect.arrayContaining([
+        '平台简介',
+        '订单大厅实时',
+        '我发布的',
+        '我接到的',
+        '我的申请',
+        '我的钱包',
+      ]),
     )
     expect(wrapper.find('[data-test="content"]').text()).toBe('内容')
   })
@@ -158,11 +168,18 @@ describe('ConsoleLayout', () => {
     )
   })
 
-  it('shows the account summary and realtime marker', async () => {
+  it('shows the account summary, certification badge and realtime marker', async () => {
     const { wrapper } = await mountLayout()
 
     expect(wrapper.text()).toContain('企业（演示）')
     expect(wrapper.text()).toContain('实时')
     expect(wrapper.text()).toContain('退出登录')
+    expect(wrapper.find('.certification-mark').text()).toBe('企业认证')
+  })
+
+  it('does not render a certification badge for admin-only viewers', async () => {
+    const { wrapper } = await mountLayout('/intro', adminViewer)
+
+    expect(wrapper.find('.certification-mark').exists()).toBe(false)
   })
 })

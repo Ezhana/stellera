@@ -10,7 +10,7 @@ import {
   type TokenPairDto,
   type UserDto,
 } from './dto'
-import type { LoginCredentials } from './types'
+import type { LoginCredentials, RegisterCredentials } from './types'
 
 function parseDto<T>(schema: ZodType<T>, value: unknown): T {
   const result = schema.safeParse(value)
@@ -30,6 +30,7 @@ function parseDto<T>(schema: ZodType<T>, value: unknown): T {
  */
 export interface AuthGateway {
   login(credentials: LoginCredentials): Promise<LoginResponseDto>
+  register(credentials: RegisterCredentials): Promise<LoginResponseDto>
   refresh(refreshToken: string): Promise<TokenPairDto>
   me(accessToken: string): Promise<UserDto>
   logout(accessToken: string, refreshToken: string): Promise<void>
@@ -40,6 +41,19 @@ export class HttpAuthGateway implements AuthGateway {
     const raw = await request<unknown>('/auth/login', {
       method: 'POST',
       body: credentials,
+    })
+    return parseDto(loginResponseDtoSchema, raw)
+  }
+
+  async register(credentials: RegisterCredentials): Promise<LoginResponseDto> {
+    const raw = await request<unknown>('/auth/register', {
+      method: 'POST',
+      body: {
+        username: credentials.username,
+        email: credentials.email,
+        full_name: credentials.fullName,
+        password: credentials.password,
+      },
     })
     return parseDto(loginResponseDtoSchema, raw)
   }

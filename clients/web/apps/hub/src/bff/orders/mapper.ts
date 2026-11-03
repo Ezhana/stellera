@@ -1,24 +1,43 @@
 import type {
+  ApplicationListModel,
+  ApplicationStatus,
+  ApplicationType,
   BadgeTone,
   EscrowStatus,
   FdeOrderDetailView,
   FdeOrderStatus,
   FdeOrderStatusMeta,
   FdeOrderView,
+  OrderApplicationView,
   OrderStatsView,
   WorkLogView,
 } from '@/models'
-import { FDE_ORDER_STATUSES } from '@/models'
+import { APPLICATION_STATUSES, APPLICATION_TYPES, FDE_ORDER_STATUSES } from '@/models'
 
 import { formatCents, formatDateTimeLabel } from '@/lib/money'
 
-import type { OrderDetailDto, OrderDto, WorkLogDto } from './dto'
+import { normalizeCertification } from '../certification'
+import type {
+  ApplicationDto,
+  ApplicationListDto,
+  OrderDetailDto,
+  OrderDto,
+  WorkLogDto,
+} from './dto'
 
 /** Label + tone pair rendered by a chip; unknown backend values keep the raw key. */
 export type StatusPresentation = Pick<FdeOrderStatusMeta, 'label' | 'tone'>
 
 const STATUS_META: ReadonlyMap<string, StatusPresentation> = new Map(
   FDE_ORDER_STATUSES.map((meta) => [meta.key, { label: meta.label, tone: meta.tone }]),
+)
+
+const APPLICATION_TYPE_META: ReadonlyMap<string, StatusPresentation> = new Map(
+  APPLICATION_TYPES.map((meta) => [meta.key, { label: meta.label, tone: meta.tone }]),
+)
+
+const APPLICATION_STATUS_META: ReadonlyMap<string, StatusPresentation> = new Map(
+  APPLICATION_STATUSES.map((meta) => [meta.key, { label: meta.label, tone: meta.tone }]),
 )
 
 const ESCROW_META: ReadonlyMap<string, StatusPresentation> = new Map([
@@ -35,6 +54,16 @@ export function formatStatus(status: string): StatusPresentation {
 /** Known escrow labels/tones; unknown values degrade to the raw key + default tone. */
 export function formatEscrow(escrowStatus: string): StatusPresentation {
   return ESCROW_META.get(escrowStatus) ?? { label: escrowStatus || '未知托管状态', tone: 'default' }
+}
+
+/** Known application-type labels/tones; unknown values degrade to the raw key. */
+export function formatApplicationType(type: string): StatusPresentation {
+  return APPLICATION_TYPE_META.get(type) ?? { label: type || '未知申请类型', tone: 'default' }
+}
+
+/** Known application-status labels/tones; unknown values degrade to the raw key. */
+export function formatApplicationStatus(status: string): StatusPresentation {
+  return APPLICATION_STATUS_META.get(status) ?? { label: status || '未知申请状态', tone: 'default' }
 }
 
 /** Backwards-compatible alias for the shared formatter in `lib/money`. */
@@ -81,8 +110,10 @@ export function toOrderView(dto: OrderDto): FdeOrderView {
     escrowTone: escrow.tone,
     publisherId: String(dto.publisher.id),
     publisherName: dto.publisher.display_name,
+    publisherCertification: normalizeCertification(dto.publisher.certification),
     engineerId: dto.engineer ? String(dto.engineer.id) : null,
     engineerName: dto.engineer?.display_name ?? null,
+    engineerCertification: normalizeCertification(dto.engineer?.certification),
     workLogCount: dto.work_log_count,
     createdAt: dto.created_at,
     publishedAtLabel: formatDateTimeLabel(dto.created_at),
@@ -97,6 +128,41 @@ export function toOrderDetailView(dto: OrderDetailDto): FdeOrderDetailView {
   return {
     ...toOrderView(dto),
     logs: dto.logs.map(toWorkLogView),
+  }
+}
+
+/** Map one application DTO into the stable page model. */
+export function toApplicationView(dto: ApplicationDto): OrderApplicationView {
+  const type = formatApplicationType(dto.type)
+  const status = formatApplicationStatus(dto.status)
+
+  return {
+    id: String(dto.id),
+    order: toOrderView(dto.order),
+    type: dto.type as ApplicationType,
+    typeLabel: type.label,
+    typeTone: type.tone,
+    status: dto.status as ApplicationStatus,
+    statusLabel: status.label,
+    statusTone: status.tone,
+    message: dto.message,
+    reviewNote: dto.review_note,
+    applicantName: dto.applicant.display_name,
+    applicantCertification: normalizeCertification(dto.applicant.certification),
+    reviewerName: dto.reviewer?.display_name ?? null,
+    reviewedAtLabel: dto.reviewed_at ? formatDateTimeLabel(dto.reviewed_at) : null,
+    createdAtLabel: formatDateTimeLabel(dto.created_at),
+  }
+}
+
+/** Map one application list page. */
+export function toApplicationListModel(dto: ApplicationListDto): ApplicationListModel {
+  const applications = dto.items.map(toApplicationView)
+  return {
+    applications,
+    total: dto.total > 0 ? dto.total : applications.length,
+    page: dto.page,
+    pageSize: dto.page_size,
   }
 }
 

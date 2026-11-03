@@ -2,7 +2,7 @@ import type { BadgeTone } from './identity'
 
 /** Ledger transaction types exposed by the wallet API. */
 export type WalletTransactionType =
-  'recharge' | 'redeem' | 'order_payment' | 'order_refund' | 'order_settlement'
+  'recharge' | 'redeem' | 'order_payment' | 'order_refund' | 'order_settlement' | 'adjustment'
 
 /** Frontend-owned presentation metadata for a transaction type. */
 export interface WalletTransactionTypeMeta {
@@ -18,6 +18,7 @@ export const WALLET_TRANSACTION_TYPES: readonly WalletTransactionTypeMeta[] = [
   { key: 'order_settlement', label: '结算', tone: 'success' },
   { key: 'redeem', label: '兑换', tone: 'accent' },
   { key: 'recharge', label: '充值', tone: 'success' },
+  { key: 'adjustment', label: '余额调整', tone: 'info' },
 ]
 
 /** A single ledger row; no backend field names leak through. */

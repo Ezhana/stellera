@@ -1,7 +1,19 @@
-import type { FdeOrderView, ViewerProfile } from '@/models'
+import type {
+  ApplicationListModel,
+  FdeOrderView,
+  OrderApplicationView,
+  ViewerProfile,
+} from '@/models'
 
-import type { OrderDetailDto, OrderDto, OrderListDto, WorkLogDto } from '../dto'
-import { toOrderView } from '../mapper'
+import type {
+  ApplicationDto,
+  ApplicationListDto,
+  OrderDetailDto,
+  OrderDto,
+  OrderListDto,
+  WorkLogDto,
+} from '../dto'
+import { toApplicationView, toOrderView } from '../mapper'
 
 /** Deterministic DTO/view fixtures shared by the BFF and page tests. */
 export function buildOrderDto(overrides: Partial<OrderDto> = {}): OrderDto {
@@ -15,7 +27,7 @@ export function buildOrderDto(overrides: Partial<OrderDto> = {}): OrderDto {
     price_cents: 8_600_000,
     status: 'open',
     escrow_status: 'held',
-    publisher: { id: 7, display_name: 'Luna' },
+    publisher: { id: 7, display_name: 'Luna', certification: 'enterprise' },
     engineer: null,
     work_log_count: 0,
     created_at: '2026-11-01T06:20:00.000Z',
@@ -47,7 +59,7 @@ export function buildWorkLogDto(overrides: Partial<WorkLogDto> = {}): WorkLogDto
   return {
     id: 11,
     order_id: 1,
-    author: { id: 9, display_name: '工程师阿远' },
+    author: { id: 9, display_name: '工程师阿远', certification: 'engineer' },
     content: '完成首批 200 例标注，已提交质检。',
     worked_hours: 6,
     created_at: '2026-11-01T10:30:00.000Z',
@@ -63,6 +75,54 @@ export function buildOrderDetailDto(overrides: Partial<OrderDetailDto> = {}): Or
   }
 }
 
+export function buildApplicationDto(overrides: Partial<ApplicationDto> = {}): ApplicationDto {
+  return {
+    id: 1,
+    order: buildOrderDto(),
+    type: 'accept',
+    status: 'pending',
+    message: null,
+    review_note: null,
+    applicant: { id: 6, display_name: '会员（演示）', certification: null },
+    reviewer: null,
+    reviewed_at: null,
+    created_at: '2026-11-01T06:30:00.000Z',
+    ...overrides,
+  }
+}
+
+export function buildApplicationView(
+  overrides: Partial<OrderApplicationView> = {},
+): OrderApplicationView {
+  return { ...toApplicationView(buildApplicationDto()), ...overrides }
+}
+
+export function buildApplicationListDto(
+  items: ApplicationDto[] = [buildApplicationDto()],
+  overrides: Partial<ApplicationListDto> = {},
+): ApplicationListDto {
+  return {
+    items,
+    total: items.length,
+    page: 1,
+    page_size: 20,
+    ...overrides,
+  }
+}
+
+export function buildApplicationListModel(
+  applications: OrderApplicationView[] = [buildApplicationView()],
+  overrides: Partial<ApplicationListModel> = {},
+): ApplicationListModel {
+  return {
+    applications,
+    total: applications.length,
+    page: 1,
+    pageSize: 20,
+    ...overrides,
+  }
+}
+
 export function buildViewer(overrides: Partial<ViewerProfile> = {}): ViewerProfile {
   return {
     id: '7',
@@ -73,14 +133,14 @@ export function buildViewer(overrides: Partial<ViewerProfile> = {}): ViewerProfi
     status: 'active',
     statusLabel: '已启用',
     isAdmin: false,
+    certification: 'enterprise',
     roles: [{ key: 'enterprise', label: '企业', tone: 'accent' }],
     permissionGroups: [],
     permissionCount: 0,
     capabilities: {
       publishOrder: true,
-      claimOrder: false,
+      applyOrder: true,
       submitOrderLog: false,
-      completeOrder: false,
       viewWallet: true,
       redeemCode: true,
       manageAdmin: false,

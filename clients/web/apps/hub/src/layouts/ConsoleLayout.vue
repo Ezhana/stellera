@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
+import CertificationMark from '@/components/identity/CertificationMark.vue'
 import UiBrandMark from '@/components/ui/UiBrandMark.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiChip from '@/components/ui/UiChip.vue'
@@ -122,6 +123,10 @@ async function handleLogout(): Promise<void> {
             <p class="console-layout__account-name">{{ viewer.displayName }}</p>
             <p class="console-layout__account-meta">{{ viewer.email ?? '未登记邮箱' }}</p>
           </div>
+        </div>
+
+        <div v-if="viewer.certification" class="console-layout__certification">
+          <CertificationMark :certification="viewer.certification" />
         </div>
 
         <ul v-if="viewer.roles.length" class="console-layout__roles" aria-label="角色">
@@ -365,6 +370,12 @@ async function handleLogout(): Promise<void> {
 }
 
 .console-layout__roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--primitive-space-1);
+}
+
+.console-layout__certification {
   display: flex;
   flex-wrap: wrap;
   gap: var(--primitive-space-1);

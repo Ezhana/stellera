@@ -23,6 +23,7 @@ import {
 import type {
   AdminRedeemCodeFilter,
   AdminUserFilter,
+  AdminWalletAdjustmentInput,
   CreateRedeemCodeInput,
   UpdateAdminUserInput,
 } from './types'
@@ -53,6 +54,11 @@ export interface AdminGateway {
   listUsers(token: string, filter?: AdminUserFilter): Promise<AdminUserListDto>
   listRoles(token: string): Promise<AdminRoleListDto>
   updateUser(token: string, id: string, input: UpdateAdminUserInput): Promise<AdminUserDto>
+  walletAdjustment(
+    token: string,
+    id: string,
+    input: AdminWalletAdjustmentInput,
+  ): Promise<AdminUserDto>
   listRedeemCodes(token: string, filter?: AdminRedeemCodeFilter): Promise<AdminRedeemCodeListDto>
   createRedeemCodes(
     token: string,
@@ -87,13 +93,32 @@ export class HttpAdminGateway implements AdminGateway {
 
   async updateUser(token: string, id: string, input: UpdateAdminUserInput): Promise<AdminUserDto> {
     const body: Record<string, unknown> = {}
+    if (input.fullName !== undefined) body.full_name = input.fullName
+    if (input.email !== undefined) body.email = input.email
     if (input.isActive !== undefined) body.is_active = input.isActive
-    if (input.roles !== undefined) body.roles = input.roles
+    if (input.certification !== undefined) body.certification = input.certification
 
     const raw = await request<unknown>(`/admin/users/${encodeId(id)}`, {
       method: 'PATCH',
       token,
       body,
+    })
+    return parseDto(adminUserDtoSchema, raw)
+  }
+
+  async walletAdjustment(
+    token: string,
+    id: string,
+    input: AdminWalletAdjustmentInput,
+  ): Promise<AdminUserDto> {
+    const raw = await request<unknown>(`/admin/users/${encodeId(id)}/wallet-adjustments`, {
+      method: 'POST',
+      token,
+      body: {
+        direction: input.direction,
+        amount_cents: input.amountCents,
+        note: input.note,
+      },
     })
     return parseDto(adminUserDtoSchema, raw)
   }

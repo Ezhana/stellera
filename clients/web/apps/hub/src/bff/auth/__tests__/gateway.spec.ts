@@ -61,4 +61,37 @@ describe('HttpAuthGateway', () => {
     expect(user.permissions).toEqual([])
     expect(user.email).toBeUndefined()
   })
+
+  it('registers with the snake_case body and returns the login response shape', async () => {
+    vi.mocked(request).mockResolvedValueOnce({
+      access_token: 'access-1',
+      refresh_token: 'refresh-1',
+      user: {
+        id: 12,
+        username: 'newbie',
+        email: 'newbie@example.com',
+        full_name: '新会员',
+        roles: ['member'],
+      },
+    })
+
+    const result = await gateway.register({
+      username: 'newbie',
+      email: 'newbie@example.com',
+      fullName: '新会员',
+      password: 'secret123',
+    })
+
+    expect(request).toHaveBeenCalledWith('/auth/register', {
+      method: 'POST',
+      body: {
+        username: 'newbie',
+        email: 'newbie@example.com',
+        full_name: '新会员',
+        password: 'secret123',
+      },
+    })
+    expect(result.access_token).toBe('access-1')
+    expect(result.user.roles).toEqual(['member'])
+  })
 })

@@ -26,7 +26,7 @@ class Role(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # 单继承的角色树：authenticated -> viewer -> operator -> admin。
+    # 单继承的角色树：authenticated -> member -> enterprise / engineer / admin。
     parent_id: Mapped[int | None] = mapped_column(
         ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
     )

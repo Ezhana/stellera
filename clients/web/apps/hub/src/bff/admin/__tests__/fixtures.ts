@@ -30,6 +30,7 @@ export function buildAdminUserDto(overrides: Partial<AdminUserDto> = {}): AdminU
     full_name: 'Luna Chen',
     is_active: true,
     roles: ['enterprise'],
+    certification: 'enterprise',
     balance_cents: 1_000_000,
     created_at: '2026-10-01T02:30:00.000Z',
     ...overrides,

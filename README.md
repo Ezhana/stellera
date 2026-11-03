@@ -24,14 +24,17 @@ just ps
 ```
 
 需要演示账号与订单时，把 `deploy/.env` 的 `INIT_ARGS` 设为 `--demo` 后重新 `just up`：会额外写入
-`enterprise / engineer / operator / viewer` 演示账号、10 条 FDE 演示订单，以及钱包余额/流水与 3 个演示兑换码。
+`member / enterprise / engineer` 演示账号、10 条 FDE 演示订单，以及钱包余额/流水与 3 个演示兑换码。
 
 | 地址 | 说明 |
 | --- | --- |
 | <http://localhost:8080/login> | 登录页（中文黑金商务风 / Obsidian） |
+| <http://localhost:8080/register> | 注册页（注册即成为会员） |
 | <http://localhost:8080/intro> | 平台简介（轮播图 + 叙事；登录后的默认页） |
 | <http://localhost:8080/fde/hall> | FDE 订单大厅（WebSocket 实时更新） |
-| <http://localhost:8080/fde/published> | 我发布的（查看当前发布、发布新需求） |
+| <http://localhost:8080/fde/published> | 我发布的（发布需求、取消、确认交付） |
+| <http://localhost:8080/fde/assigned> | 我接到的（提交日志、申请交付） |
+| <http://localhost:8080/fde/applications> | 我的申请（我发起的 / 待我审批） |
 | <http://localhost:8080/wallet> | 钱包（余额、用量、充值记录、兑换码） |
 | <http://localhost:8080/admin/users> | 管理后台（仅 admin：用户 / 兑换码 / 系统设置） |
 | <http://localhost:3000> | new-api 控制台 |
@@ -68,17 +71,20 @@ new-api 数据在 `infra/new-api/data`。
 
 ## FDE 订单模块
 
-业务闭环：**企业发布需求 → 平台代收并托管资金 → 工程师接单交付（提交工作日志）→ 企业验收 → 平台结算**。
+业务闭环：**发布需求 → 平台代收并托管资金 → 接单方申请接单 → 发布方通过 → 提交日志 → 申请交付 → 发布方验收 → 平台结算**。
 
-- 左侧菜单为两级：`平台 → 平台简介`、`FDE 订单 → 订单大厅（实时）/ 我发布的`、`钱包 → 我的钱包`；
-  超级管理员额外看到 `管理 → 用户 / 兑换码 / 系统设置`。
-- 订单大厅列表展示任务、行业、交付周期、价格、状态、托管状态与发布时间，支持状态/行业/关键词筛选。
-- 实时更新走 `WebSocket /api/v1/fde/ws`：创建、认领、日志、完成、取消都会广播
+- 左侧菜单为两级：`平台 → 平台简介`、`FDE 订单 → 订单大厅（实时）/ 我发布的 / 我接到的 / 我的申请`、
+  `钱包 → 我的钱包`；超级管理员额外看到 `管理 → 用户 / 兑换码 / 系统设置`。
+- 角色体系：注册即成为 `member`；`enterprise` / `engineer` 是认证身份（认证即授予角色，仅作展示）；
+  所有登录用户都可以发布订单、申请接单、提交日志、申请交付；`admin` 额外拥有管理端权限。
+- 接单与交付都走**申请 + 发布者审批**：申请接单通过后订单进入进行中，申请交付通过后订单完成并结算；
+  同订单其它待审批申请自动驳回；接单方不能单方面取消已接订单，发布者可取消待接单订单并退款。
+- 实时更新走 `WebSocket /api/v1/fde/ws`：创建、申请审批引发的状态变化、日志、取消都会广播
   `order.created` / `order.updated`，断线自动重连，刷新列表兜底。
-- 后端 RBAC 在 `authenticated` 之上新增 `enterprise`（发布/完成/取消）与 `engineer`（认领/提交日志）角色；
-  未认证请求由 Casbin 中间件返回 401/403。
+- 认证标识：企业与工程师认证在侧边栏、订单发布者/接单工程师、申请列表中展示；管理员在用户管理里设置。
 - API 一览见 [`services/hub-api/README.md`](services/hub-api/README.md)，
-  取舍记录见 [`docs/adr/0003-fde-orders.md`](docs/adr/0003-fde-orders.md)。
+  取舍记录见 [`docs/adr/0003-fde-orders.md`](docs/adr/0003-fde-orders.md) 与
+  [`docs/adr/0005-roles-order-applications.md`](docs/adr/0005-roles-order-applications.md)。
 
 ## 钱包与管理后台
 
@@ -90,7 +96,7 @@ new-api 数据在 `infra/new-api/data`。
 - **FDE 资金打通**：发布需求时从发布方余额扣款托管，取消订单退回，确认交付后结算给接单工程师，
   变动与订单状态在同一事务内完成；
 - **管理后台（仅超级管理员 `admin`）**：
-  - 用户：搜索、按角色筛选、启用/停用、调整角色（不能停用自己、不能移除最后一个管理员）；
+  - 用户：搜索、按角色筛选、启用/停用；编辑姓名/邮箱、设置企业/工程师认证、通过增减流水调整余额；
   - 兑换码：按状态/关键词筛选、批量生成、停用/启用；
   - 系统设置：平台名称、客服联系方式、充值说明（白名单键值，不覆盖已有修改）；
 - 非管理员前端不渲染“管理”菜单，直接访问 `/admin/*` 路由会被重定向回平台简介。
@@ -162,7 +168,7 @@ clients/web/                  # 前端工作区：apps/hub、共享 ESLint/Prett
 services/hub-api/             # 后端服务：app/、casbin/、migrations/、tests/
 infra/                        # 本地依赖编排：postgres/、redis、new-api/
 deploy/                       # 发布编排：compose.yaml（include infra + hub-api/web）与 .env.example
-docs/adr/                     # 架构决策记录（0001 登录与 RBAC、0002 前端 BFF/页面模型、0003 FDE 订单、0004 钱包与管理后台）
+docs/adr/                     # 架构决策记录（0001 登录与 RBAC、0002 前端 BFF/页面模型、0003 FDE 订单、0004 钱包与管理后台、0005 角色与订单申请）
 tools/                        # 仓库级维护工具（gen-api 等，按需创建）
 ```
 

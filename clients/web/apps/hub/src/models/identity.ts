@@ -1,6 +1,31 @@
 /** Tone names shared by chips and page models. */
 export type BadgeTone = 'default' | 'accent' | 'info' | 'success' | 'warning' | 'error'
 
+/** Certification derived from the viewer's enterprise/engineer roles. */
+export type Certification = 'enterprise' | 'engineer' | null
+
+export interface CertificationMeta {
+  certification: Exclude<Certification, null>
+  label: string
+  tone: BadgeTone
+}
+
+/** Frontend-owned labels/tones for the two certifications; `admin` never certifies. */
+export const CERTIFICATIONS: readonly CertificationMeta[] = [
+  { certification: 'enterprise', label: '企业认证', tone: 'accent' },
+  { certification: 'engineer', label: '工程师认证', tone: 'success' },
+]
+
+const CERTIFICATION_META = new Map<Exclude<Certification, null>, CertificationMeta>(
+  CERTIFICATIONS.map((meta) => [meta.certification, meta]),
+)
+
+/** Known certification label/tone, or `null` when the viewer is not certified. */
+export function describeCertification(certification: Certification): CertificationMeta | null {
+  if (!certification) return null
+  return CERTIFICATION_META.get(certification) ?? null
+}
+
 export interface RoleView {
   key: string
   label: string
@@ -30,9 +55,8 @@ export type ViewerStatus = 'active' | 'inactive'
  */
 export interface HubCapabilities {
   publishOrder: boolean
-  claimOrder: boolean
+  applyOrder: boolean
   submitOrderLog: boolean
-  completeOrder: boolean
   viewWallet: boolean
   redeemCode: boolean
   manageAdmin: boolean
@@ -53,6 +77,7 @@ export interface ViewerProfile {
   status: ViewerStatus
   statusLabel: string
   isAdmin: boolean
+  certification: Certification
   roles: RoleView[]
   permissionGroups: PermissionGroupView[]
   permissionCount: number

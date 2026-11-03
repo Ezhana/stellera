@@ -29,6 +29,10 @@ export const adminUserDtoSchema = z.object({
     .array(z.string())
     .nullish()
     .transform((value) => value ?? []),
+  certification: z
+    .string()
+    .nullish()
+    .transform((value) => value ?? null),
   balance_cents: z
     .number()
     .nullish()

@@ -17,6 +17,7 @@ import UiIcon from '@/components/ui/UiIcon.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import ConsoleLayout from '@/layouts/ConsoleLayout.vue'
 import { FDE_INDUSTRIES, type FdeOrderStatus, type FdeOrderView } from '@/models'
+import type { OrderApplicationView } from '@/models'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -25,9 +26,12 @@ const viewer = computed(() => auth.viewer)
 const viewerId = computed(() => auth.viewer?.id ?? '')
 
 const orders = ref<FdeOrderView[]>([])
+const myPendingApplications = ref<OrderApplicationView[]>([])
 const loading = ref(true)
 const refreshing = ref(false)
+const applyingOrderId = ref<string | null>(null)
 const errorMessage = ref('')
+const successMessage = ref('')
 const statusFilter = ref<FdeOrderStatus | 'all'>('all')
 const industryFilter = ref('')
 const keyword = ref('')
@@ -41,6 +45,11 @@ let highlightTimer: ReturnType<typeof setTimeout> | null = null
 
 const stats = computed(() => summarizeOrders(orders.value))
 const liveHint = computed(() => lastEventLabel.value || '刚刚已同步')
+
+/** Orders already carrying one of my pending accept applications; their button is disabled. */
+const pendingAcceptOrderIds = computed(
+  () => new Set(myPendingApplications.value.map((application) => application.order.id)),
+)
 
 /** The hall loads one page of orders and filters client-side, so realtime upserts stay visible. */
 const filteredOrders = computed(() => {
@@ -73,6 +82,11 @@ function toErrorMessage(error: unknown): string {
       return '订单服务暂时不可用，请稍后再试。'
     case 'malformed-response':
       return '服务返回的数据格式异常，请联系管理员。'
+    case 'conflict':
+    case 'invalid-input':
+      return error.message || '当前操作与订单状态冲突，请刷新后重试。'
+    case 'not-found':
+      return '订单不存在或已被移除，请刷新后重试。'
     default:
       return error.message || '订单加载失败，请稍后重试。'
   }
@@ -92,11 +106,52 @@ async function loadOrders(showLoading = true): Promise<void> {
   }
 }
 
+/** Load my pending accept applications so the hall can mark already-applied orders. */
+async function loadMyPendingApplications(): Promise<void> {
+  try {
+    const model = await ordersBff.listMyApplications({
+      type: 'accept',
+      status: 'pending',
+      pageSize: 100,
+    })
+    myPendingApplications.value = model.applications
+  } catch {
+    // Applications are an enhancement: a failed lookup must never break the hall list.
+    myPendingApplications.value = []
+  }
+}
+
+async function applyForOrder(order: FdeOrderView): Promise<void> {
+  if (applyingOrderId.value) return
+  applyingOrderId.value = order.id
+  successMessage.value = ''
+  errorMessage.value = ''
+
+  try {
+    await ordersBff.applyForOrder(order.id, 'accept')
+    successMessage.value = '申请已提交，等待发布者审批。'
+    announcement.value = `已申请接单：${order.title}`
+    await Promise.all([loadOrders(false), loadMyPendingApplications()])
+  } catch (error) {
+    errorMessage.value = toErrorMessage(error)
+  } finally {
+    applyingOrderId.value = null
+  }
+}
+
+function canApply(order: FdeOrderView): boolean {
+  return (
+    order.status === 'open' &&
+    order.publisherId !== viewerId.value &&
+    !pendingAcceptOrderIds.value.has(order.id)
+  )
+}
+
 async function refresh(): Promise<void> {
   if (refreshing.value) return
   refreshing.value = true
   try {
-    await loadOrders(false)
+    await Promise.all([loadOrders(false), loadMyPendingApplications()])
   } finally {
     refreshing.value = false
   }
@@ -136,7 +191,7 @@ function connectRealtime(): void {
 }
 
 onMounted(async () => {
-  await loadOrders()
+  await Promise.all([loadOrders(), loadMyPendingApplications()])
   connectRealtime()
 })
 
@@ -168,6 +223,16 @@ onBeforeUnmount(() => {
       </PageHeader>
 
       <p class="visually-hidden" role="status" aria-live="polite">{{ announcement }}</p>
+
+      <UiAlert
+        v-if="successMessage"
+        variant="success"
+        title="申请已提交"
+        dismissible
+        @close="successMessage = ''"
+      >
+        {{ successMessage }}
+      </UiAlert>
 
       <OrderStatsGrid :stats="stats" total-label="订单总数" />
 
@@ -243,7 +308,25 @@ onBeforeUnmount(() => {
           :viewer-id="viewerId"
           caption="订单大厅实时订单列表"
           :highlighted-id="highlightedId"
-        />
+        >
+          <template #actions="{ order }">
+            <template v-if="order.publisherId === viewerId">
+              <span class="order-page__action-hint">我发布的</span>
+            </template>
+            <template v-else-if="order.status === 'open'">
+              <UiButton
+                v-if="canApply(order)"
+                size="sm"
+                :loading="applyingOrderId === order.id"
+                @click="applyForOrder(order)"
+              >
+                申请接单
+              </UiButton>
+              <UiButton v-else size="sm" variant="secondary" disabled>已申请</UiButton>
+            </template>
+            <span v-else class="order-page__action-hint">—</span>
+          </template>
+        </OrderTable>
       </section>
     </div>
   </ConsoleLayout>
@@ -359,6 +442,12 @@ onBeforeUnmount(() => {
 .order-page__result-live::before {
   content: '·';
   margin-right: var(--primitive-space-2);
+}
+
+.order-page__action-hint {
+  color: var(--obsidian-tertiary-text);
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
 }
 
 .order-page__state {

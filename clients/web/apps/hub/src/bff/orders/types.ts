@@ -1,3 +1,5 @@
+import type { ApplicationType } from '@/models'
+
 /**
  * Page-facing inputs for the orders BFF (camelCase, already validated by the page).
  */
@@ -15,4 +17,10 @@ export interface CreateOrderInput {
 export interface CreateWorkLogInput {
   content: string
   workedHours: number | null
+}
+
+/** Payload for a new accept/delivery application; `message` is optional and capped at 500 chars. */
+export interface CreateApplicationInput {
+  type: ApplicationType
+  message: string | null
 }

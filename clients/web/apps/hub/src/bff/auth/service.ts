@@ -4,7 +4,7 @@ import { toBffError } from '../errors'
 import type { UserDto } from './dto'
 import type { AuthGateway } from './gateway'
 import { toViewerProfile } from './mapper'
-import type { LoginCredentials } from './types'
+import type { LoginCredentials, RegisterCredentials } from './types'
 import type { SessionTokens, StoredAuth, TokenStore } from './token-store'
 
 /**
@@ -34,13 +34,16 @@ export class AuthBff {
 
   async login(credentials: LoginCredentials, remember: boolean): Promise<SessionView> {
     try {
-      const dto = await this.gateway.login(credentials)
-      const tokens: SessionTokens = {
-        accessToken: dto.access_token,
-        refreshToken: dto.refresh_token,
-      }
-      this.tokenStore.save(tokens, remember)
-      return this.toSession(dto.user, remember)
+      return this.persist(await this.gateway.login(credentials), remember)
+    } catch (error) {
+      throw toBffError(error, 'login')
+    }
+  }
+
+  /** Public registration mirrors login: the backend returns the same AuthResponse shape. */
+  async register(credentials: RegisterCredentials, remember: boolean): Promise<SessionView> {
+    try {
+      return this.persist(await this.gateway.register(credentials), remember)
     } catch (error) {
       throw toBffError(error, 'login')
     }
@@ -92,6 +95,18 @@ export class AuthBff {
       this.tokenStore.clear()
       return null
     }
+  }
+
+  private persist(
+    dto: { access_token: string; refresh_token: string; user: UserDto },
+    remember: boolean,
+  ): SessionView {
+    const tokens: SessionTokens = {
+      accessToken: dto.access_token,
+      refreshToken: dto.refresh_token,
+    }
+    this.tokenStore.save(tokens, remember)
+    return this.toSession(dto.user, remember)
   }
 
   private toSession(user: UserDto, remember: boolean): SessionView {

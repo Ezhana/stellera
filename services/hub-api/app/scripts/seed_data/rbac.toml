@@ -1,4 +1,5 @@
 # RBAC 基线数据：每次 init / seed 都会应用（幂等）。
+# 角色树：authenticated（根）-> member -> enterprise / engineer / admin。
 # roles 的 parent 可省略，表示根角色。
 
 [[roles]]
@@ -6,32 +7,27 @@ name = "authenticated"
 description = "所有已登录用户的基线角色"
 
 [[roles]]
-name = "viewer"
+name = "member"
 parent = "authenticated"
-description = "只读访问"
-
-[[roles]]
-name = "operator"
-parent = "viewer"
-description = "运营写操作"
-
-[[roles]]
-name = "admin"
-parent = "operator"
-description = "全部权限"
+description = "注册即获得的会员基线角色"
 
 [[roles]]
 name = "enterprise"
-parent = "authenticated"
-description = "企业发布方：发布需求 / 确认交付 / 取消订单"
+parent = "member"
+description = "已认证企业：发布需求 / 审批接单与交付申请 / 取消订单"
 
 [[roles]]
 name = "engineer"
-parent = "authenticated"
-description = "接单工程师：认领订单 / 提交工作日志"
+parent = "member"
+description = "已认证工程师：申请接单 / 提交工作日志 / 申请交付"
 
-# 当前上线模块：auth + FDE 订单 + wallet（在线充值永久关闭，只保留查询与兑换码入账）；
-# plaza / 旧 orders 已下线，不再写入权限表，避免前端权限卡片出现不存在的模块。
+[[roles]]
+name = "admin"
+parent = "member"
+description = "超级管理员：管理后台全部权限"
+
+# 业务端点对所有登录用户开放（authenticated），具体权限（发布者 / 接单工程师 /
+# 管理员）由服务层按订单归属判断；admin 另外保留 /api/v1/* 全方法通配。
 
 [[permissions]]
 role = "authenticated"
@@ -64,12 +60,6 @@ action = "^POST$"
 description = "兑换码入账"
 
 [[permissions]]
-role = "admin"
-object = "/api/v1/*"
-action = "^(GET|POST|PUT|PATCH|DELETE)$"
-description = "全部业务 API 权限"
-
-[[permissions]]
 role = "authenticated"
 object = "/api/v1/fde/orders"
 action = "^GET$"
@@ -79,34 +69,64 @@ description = "只读：FDE 订单大厅"
 role = "authenticated"
 object = "/api/v1/fde/orders/*"
 action = "^GET$"
-description = "只读：FDE 订单详情 / 我发布的"
+description = "只读：FDE 订单详情 / 我发布的 / 我接到的"
 
 [[permissions]]
-role = "enterprise"
+role = "authenticated"
 object = "/api/v1/fde/orders"
 action = "^POST$"
-description = "企业：发布 FDE 需求"
+description = "发布 FDE 需求"
 
 [[permissions]]
-role = "enterprise"
-object = "/api/v1/fde/orders/*/complete"
-action = "^POST$"
-description = "企业：确认交付并释放托管资金"
-
-[[permissions]]
-role = "enterprise"
+role = "authenticated"
 object = "/api/v1/fde/orders/*/cancel"
 action = "^POST$"
-description = "企业：取消订单并退回托管资金"
+description = "取消订单（服务层限定发布者 / 管理员）"
 
 [[permissions]]
-role = "engineer"
-object = "/api/v1/fde/orders/*/claim"
-action = "^POST$"
-description = "工程师：认领订单"
-
-[[permissions]]
-role = "engineer"
+role = "authenticated"
 object = "/api/v1/fde/orders/*/logs"
 action = "^POST$"
-description = "工程师：提交工作日志"
+description = "提交工作日志（服务层限定接单工程师 / 管理员）"
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/fde/orders/*/applications"
+action = "^POST$"
+description = "申请接单 / 申请交付"
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/fde/applications/mine"
+action = "^GET$"
+description = "只读：我发起的申请"
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/fde/applications/received"
+action = "^GET$"
+description = "只读：我发布的订单收到的申请"
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/fde/applications/*/approve"
+action = "^POST$"
+description = "通过申请（服务层限定订单发布者 / 管理员）"
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/fde/applications/*/reject"
+action = "^POST$"
+description = "驳回申请（服务层限定订单发布者 / 管理员）"
+
+[[permissions]]
+role = "authenticated"
+object = "/api/v1/fde/applications/*/withdraw"
+action = "^POST$"
+description = "撤回申请（服务层限定申请人本人）"
+
+[[permissions]]
+role = "admin"
+object = "/api/v1/*"
+action = "^(GET|POST|PUT|PATCH|DELETE)$"
+description = "管理后台全部业务 API 权限"

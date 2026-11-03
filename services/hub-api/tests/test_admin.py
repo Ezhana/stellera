@@ -1,6 +1,6 @@
-"""管理后台端到端测试：用户 / 角色目录 / 兑换码 / 系统设置。
+"""管理后台端到端测试：用户编辑 / 认证状态 / 角色目录 / 余额调整 / 兑换码 / 设置。
 
-仅 admin 可用；非管理员由 Casbin 拦截返回 403。演示数据：5 个用户、3 个兑换码。
+仅 admin 可用；非管理员由 Casbin 拦截返回 403。演示数据：4 个用户、3 个兑换码。
 """
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import timedelta
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,11 +22,14 @@ from app.models.user import User
 from app.services import admin as admin_service
 from app.services.admin import AdminConflictError
 from tests.conftest import (
+    ADMIN_USERNAME,
     API_V1,
-    OPERATOR_PASSWORD,
-    OPERATOR_USERNAME,
-    VIEWER_PASSWORD,
-    VIEWER_USERNAME,
+    ENGINEER_PASSWORD,
+    ENGINEER_USERNAME,
+    ENTERPRISE_PASSWORD,
+    ENTERPRISE_USERNAME,
+    MEMBER_PASSWORD,
+    MEMBER_USERNAME,
     auth_headers,
     login,
 )
@@ -40,6 +44,7 @@ USER_FIELDS = {
     "full_name",
     "is_active",
     "roles",
+    "certification",
     "balance_cents",
     "created_at",
 }
@@ -62,24 +67,24 @@ CODE_FIELDS = {
 # ---------- 测试辅助 ----------
 
 
-def _headers(pair: dict) -> dict[str, str]:
+def _headers(pair: dict[str, Any]) -> dict[str, str]:
     return auth_headers(pair["access_token"])
 
 
-def _list_users(client: TestClient, pair: dict, **params: str | int) -> dict:
+def _list_users(client: TestClient, pair: dict[str, Any], **params: str | int) -> dict[str, Any]:
     response = client.get(f"{ADMIN}/users", params=params, headers=_headers(pair))
     assert response.status_code == 200, response.text
     return response.json()
 
 
-def _find_user(items: list[dict], username: str) -> dict:
+def _find_user(items: list[dict[str, Any]], username: str) -> dict[str, Any]:
     for item in items:
         if item["username"] == username:
             return item
     raise AssertionError(f"未找到用户 {username}")
 
 
-def _list_codes(client: TestClient, pair: dict, **params: str | int) -> dict:
+def _list_codes(client: TestClient, pair: dict[str, Any], **params: str | int) -> dict[str, Any]:
     response = client.get(f"{ADMIN}/redeem-codes", params=params, headers=_headers(pair))
     assert response.status_code == 200, response.text
     return response.json()
@@ -87,13 +92,13 @@ def _list_codes(client: TestClient, pair: dict, **params: str | int) -> dict:
 
 def _create_codes(
     client: TestClient,
-    pair: dict,
+    pair: dict[str, Any],
     *,
     amount_cents: int = 50_000,
     quantity: int = 1,
     expires_in_days: int | None = 30,
     note: str | None = "测试批次",
-) -> dict:
+) -> dict[str, Any]:
     response = client.post(
         f"{ADMIN}/redeem-codes",
         headers=_headers(pair),
@@ -141,6 +146,22 @@ def _setup_code(
     asyncio.run(_run())
 
 
+def _publish(client: TestClient, pair: dict[str, Any], *, price_cents: int = 10_000) -> dict:
+    response = client.post(
+        f"{FDE}/orders",
+        headers=_headers(pair),
+        json={
+            "title": "认证同步测试订单",
+            "industry": "医疗健康",
+            "description": "",
+            "delivery_days": 3,
+            "price_cents": price_cents,
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
 # ---------- 权限 ----------
 
 
@@ -153,8 +174,9 @@ def test_admin_endpoints_require_authentication(client: TestClient) -> None:
 @pytest.mark.parametrize(
     ("username", "password"),
     [
-        (VIEWER_USERNAME, VIEWER_PASSWORD),
-        (OPERATOR_USERNAME, OPERATOR_PASSWORD),
+        (MEMBER_USERNAME, MEMBER_PASSWORD),
+        (ENTERPRISE_USERNAME, ENTERPRISE_PASSWORD),
+        (ENGINEER_USERNAME, ENGINEER_PASSWORD),
     ],
 )
 def test_non_admin_roles_cannot_access_admin(
@@ -178,22 +200,29 @@ def test_non_admin_roles_cannot_access_admin(
         ).status_code
         == 403
     )
+    assert (
+        client.post(
+            f"{ADMIN}/users/1/wallet-adjustments",
+            headers=_headers(pair),
+            json={"direction": "credit", "amount_cents": 1000, "note": "越权"},
+        ).status_code
+        == 403
+    )
 
 
 # ---------- 用户 ----------
 
 
-def test_list_users_includes_roles_and_balance(client: TestClient) -> None:
+def test_list_users_includes_roles_certification_and_balance(client: TestClient) -> None:
     admin = login(client)
 
     body = _list_users(client, admin, page_size=100)
 
     assert set(body) == {"items", "total", "page", "page_size"}
-    assert body["total"] == 5
+    assert body["total"] == 4
     assert [item["username"] for item in body["items"]] == [
         "admin",
-        "operator",
-        "viewer",
+        "member",
         "enterprise",
         "engineer",
     ]
@@ -201,43 +230,49 @@ def test_list_users_includes_roles_and_balance(client: TestClient) -> None:
 
     expected_balances = {
         "admin": 300_000_000,
-        "operator": 200_000,
-        "viewer": 150_000,
+        "member": 150_000,
         "enterprise": 212_300_000,
         "engineer": 15_700_000,
     }
     expected_roles = {
         "admin": ["admin"],
-        "operator": ["operator"],
-        "viewer": ["viewer"],
+        "member": ["member"],
         "enterprise": ["enterprise"],
         "engineer": ["engineer"],
+    }
+    expected_certifications = {
+        "admin": None,
+        "member": None,
+        "enterprise": "enterprise",
+        "engineer": "engineer",
     }
     for item in body["items"]:
         assert item["balance_cents"] == expected_balances[item["username"]]
         assert item["roles"] == expected_roles[item["username"]]
+        assert item["certification"] == expected_certifications[item["username"]]
         assert item["is_active"] is True
         assert item["created_at"]
-    assert _find_user(body["items"], "enterprise")["full_name"] == "企业（演示）"
+    assert _find_user(body["items"], "member")["full_name"] == "会员（演示）"
 
 
 def test_list_users_search_filter_and_pagination(client: TestClient) -> None:
     admin = login(client)
 
-    assert _list_users(client, admin, q="viewer")["total"] == 1
-    assert _list_users(client, admin, q="演示")["total"] == 4
-    assert _list_users(client, admin, q="example.com")["total"] == 5
+    assert _list_users(client, admin, q="member")["total"] == 1
+    assert _list_users(client, admin, q="演示")["total"] == 3
+    assert _list_users(client, admin, q="example.com")["total"] == 4
     assert _list_users(client, admin, role="admin")["total"] == 1
+    assert _list_users(client, admin, role="member")["total"] == 1
     assert _list_users(client, admin, role="engineer")["total"] == 1
     assert _list_users(client, admin, role="nonexistent")["total"] == 0
 
     page1 = _list_users(client, admin, page=1, page_size=2)
     page2 = _list_users(client, admin, page=2, page_size=2)
     page3 = _list_users(client, admin, page=3, page_size=2)
-    assert page1["total"] == 5
+    assert page1["total"] == 4
     assert [item["id"] for item in page1["items"]] == [1, 2]
     assert [item["id"] for item in page2["items"]] == [3, 4]
-    assert [item["id"] for item in page3["items"]] == [5]
+    assert page3["items"] == []
 
 
 def test_roles_catalog_excludes_authenticated(client: TestClient) -> None:
@@ -247,95 +282,108 @@ def test_roles_catalog_excludes_authenticated(client: TestClient) -> None:
 
     assert response.status_code == 200
     items = response.json()["items"]
-    assert [item["name"] for item in items] == [
-        "admin",
-        "operator",
-        "viewer",
-        "enterprise",
-        "engineer",
-    ]
+    assert [item["name"] for item in items] == ["member", "enterprise", "engineer", "admin"]
     assert all(item["description"] for item in items)
 
 
 def test_disable_user_blocks_login(client: TestClient) -> None:
     admin = login(client)
-    viewer = _find_user(_list_users(client, admin)["items"], "viewer")
+    member = _find_user(_list_users(client, admin)["items"], "member")
 
     disabled = client.patch(
-        f"{ADMIN}/users/{viewer['id']}",
+        f"{ADMIN}/users/{member['id']}",
         headers=_headers(admin),
         json={"is_active": False},
     )
 
     assert disabled.status_code == 200
     assert disabled.json()["is_active"] is False
-    assert disabled.json()["roles"] == ["viewer"]
+    assert disabled.json()["roles"] == ["member"]
+    assert disabled.json()["certification"] is None
     assert disabled.json()["balance_cents"] == 150_000
 
     response = client.post(
         f"{API_V1}/auth/login",
-        json={"username": VIEWER_USERNAME, "password": VIEWER_PASSWORD},
+        json={"username": MEMBER_USERNAME, "password": MEMBER_PASSWORD},
     )
     assert response.status_code == 401
     assert response.json()["detail"] == "用户已被禁用"
 
     # 重新启用后可以正常登录。
     enabled = client.patch(
-        f"{ADMIN}/users/{viewer['id']}",
+        f"{ADMIN}/users/{member['id']}",
         headers=_headers(admin),
         json={"is_active": True},
     )
     assert enabled.status_code == 200
     assert enabled.json()["is_active"] is True
-    login(client, VIEWER_USERNAME, VIEWER_PASSWORD)
+    login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
 
 
-def test_role_change_takes_effect_immediately(client: TestClient) -> None:
+def test_update_user_profile(client: TestClient) -> None:
     admin = login(client)
-    viewer_pair = login(client, VIEWER_USERNAME, VIEWER_PASSWORD)
-    viewer = _find_user(_list_users(client, admin)["items"], "viewer")
-    enterprise = login(client)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
+    member_item = _find_user(_list_users(client, admin)["items"], "member")
 
-    changed = client.patch(
-        f"{ADMIN}/users/{viewer['id']}",
+    updated = client.patch(
+        f"{ADMIN}/users/{member_item['id']}",
         headers=_headers(admin),
-        json={"roles": ["viewer", "engineer"]},
+        json={"full_name": "  新会员  ", "email": "  Member2@Example.COM "},
     )
-    assert changed.status_code == 200
-    assert changed.json()["roles"] == ["viewer", "engineer"]
 
-    # 已登录的 viewer 不重新登录也能认领订单（Casbin 投影已即时刷新）。
-    order = client.post(
-        f"{FDE}/orders",
-        headers=_headers(enterprise),
-        json={
-            "title": "角色变更后认领",
-            "industry": "医疗健康",
-            "description": "",
-            "delivery_days": 3,
-            "price_cents": 100_000,
-        },
+    assert updated.status_code == 200, updated.text
+    body = updated.json()
+    assert body["full_name"] == "新会员"
+    assert body["email"] == "member2@example.com"
+    assert body["roles"] == ["member"]
+    assert body["certification"] is None
+
+    # 邮箱大小写不敏感地唯一：换成 engineer 的邮箱应冲突。
+    conflict = client.patch(
+        f"{ADMIN}/users/{member_item['id']}",
+        headers=_headers(admin),
+        json={"email": "ENGINEER@example.com"},
     )
-    assert order.status_code == 201, order.text
-    claimed = client.post(f"{FDE}/orders/{order.json()['id']}/claim", headers=_headers(viewer_pair))
-    assert claimed.status_code == 200, claimed.text
-    assert claimed.json()["engineer"]["display_name"] == "访客（演示）"
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"] == "邮箱已被注册"
 
-    me = client.get(f"{API_V1}/auth/me", headers=_headers(viewer_pair)).json()
-    assert set(me["roles"]) == {"viewer", "engineer"}
+    me = client.get(f"{API_V1}/auth/me", headers=_headers(member)).json()
+    assert me["full_name"] == "新会员"
+    assert me["email"] == "member2@example.com"
 
 
 def test_update_user_validation_and_not_found(client: TestClient) -> None:
     admin = login(client)
-    viewer = _find_user(_list_users(client, admin)["items"], "viewer")
+    member = _find_user(_list_users(client, admin)["items"], "member")
 
-    invalid = client.patch(
-        f"{ADMIN}/users/{viewer['id']}",
+    empty = client.patch(f"{ADMIN}/users/{member['id']}", headers=_headers(admin), json={})
+    assert empty.status_code == 422
+
+    invalid_email = client.patch(
+        f"{ADMIN}/users/{member['id']}",
         headers=_headers(admin),
-        json={"roles": ["superuser"]},
+        json={"email": "not-an-email"},
     )
-    assert invalid.status_code == 422
-    assert invalid.json()["detail"] == "存在无效角色"
+    assert invalid_email.status_code == 422
+
+    blank_name = client.patch(
+        f"{ADMIN}/users/{member['id']}", headers=_headers(admin), json={"full_name": "   "}
+    )
+    assert blank_name.status_code == 422
+
+    long_name = client.patch(
+        f"{ADMIN}/users/{member['id']}",
+        headers=_headers(admin),
+        json={"full_name": "x" * 129},
+    )
+    assert long_name.status_code == 422
+
+    invalid_certification = client.patch(
+        f"{ADMIN}/users/{member['id']}",
+        headers=_headers(admin),
+        json={"certification": "admin"},
+    )
+    assert invalid_certification.status_code == 422
 
     missing = client.patch(
         f"{ADMIN}/users/999999", headers=_headers(admin), json={"is_active": False}
@@ -343,7 +391,79 @@ def test_update_user_validation_and_not_found(client: TestClient) -> None:
     assert missing.status_code == 404
 
 
-def test_cannot_disable_or_demote_self(client: TestClient) -> None:
+def test_certification_change_updates_roles_and_order_refs(client: TestClient) -> None:
+    admin = login(client)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
+    enterprise = login(client, ENTERPRISE_USERNAME, ENTERPRISE_PASSWORD)
+    member_id = member["user"]["id"]
+    member_item = _find_user(_list_users(client, admin)["items"], "member")
+    assert member_item["roles"] == ["member"]
+    assert member_item["certification"] is None
+
+    # 授予企业认证：保留 member 基线角色。
+    granted = client.patch(
+        f"{ADMIN}/users/{member_id}",
+        headers=_headers(admin),
+        json={"certification": "enterprise"},
+    )
+    assert granted.status_code == 200
+    assert granted.json()["roles"] == ["member", "enterprise"]
+    assert granted.json()["certification"] == "enterprise"
+
+    me = client.get(f"{API_V1}/auth/me", headers=_headers(member)).json()
+    assert set(me["roles"]) == {"member", "enterprise"}
+
+    # 订单里的用户认证状态同步：member 申请接单并被通过后，工程师摘要为企业。
+    order = _publish(client, enterprise)
+    application = client.post(
+        f"{FDE}/orders/{order['id']}/applications",
+        headers=_headers(member),
+        json={"type": "accept"},
+    )
+    assert application.status_code == 201, application.text
+    approved = client.post(
+        f"{FDE}/applications/{application.json()['id']}/approve",
+        headers=_headers(enterprise),
+        json={},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["order"]["engineer"]["certification"] == "enterprise"
+
+    # 切换为工程师认证：互斥替换。
+    switched = client.patch(
+        f"{ADMIN}/users/{member_id}",
+        headers=_headers(admin),
+        json={"certification": "engineer"},
+    )
+    assert switched.json()["roles"] == ["member", "engineer"]
+    assert switched.json()["certification"] == "engineer"
+    detail = client.get(f"{FDE}/orders/{order['id']}", headers=_headers(enterprise)).json()
+    assert detail["engineer"]["certification"] == "engineer"
+
+    # 撤销认证：只保留 member。
+    revoked = client.patch(
+        f"{ADMIN}/users/{member_id}",
+        headers=_headers(admin),
+        json={"certification": "none"},
+    )
+    assert revoked.json()["roles"] == ["member"]
+    assert revoked.json()["certification"] is None
+    detail = client.get(f"{FDE}/orders/{order['id']}", headers=_headers(enterprise)).json()
+    assert detail["engineer"]["certification"] is None
+
+    # 认证状态变更不会影响 admin 角色。
+    admin_id = admin["user"]["id"]
+    certified_admin = client.patch(
+        f"{ADMIN}/users/{admin_id}",
+        headers=_headers(admin),
+        json={"certification": "enterprise"},
+    )
+    assert certified_admin.status_code == 200
+    assert "admin" in certified_admin.json()["roles"]
+    assert certified_admin.json()["certification"] == "enterprise"
+
+
+def test_cannot_disable_self(client: TestClient) -> None:
     admin = login(client)
     admin_id = admin["user"]["id"]
 
@@ -352,12 +472,6 @@ def test_cannot_disable_or_demote_self(client: TestClient) -> None:
     )
     assert disabled.status_code == 409
     assert disabled.json()["detail"] == "不能停用当前登录账号"
-
-    demoted = client.patch(
-        f"{ADMIN}/users/{admin_id}", headers=_headers(admin), json={"roles": ["operator"]}
-    )
-    assert demoted.status_code == 409
-    assert demoted.json()["detail"] == "不能移除自己的管理员角色"
 
 
 def test_cannot_remove_last_admin(settings: Settings, client: TestClient) -> None:
@@ -369,22 +483,103 @@ def test_cannot_remove_last_admin(settings: Settings, client: TestClient) -> Non
         try:
             async with factory() as session:
                 admin = (
-                    await session.execute(select(User).where(User.username == "admin"))
+                    await session.execute(select(User).where(User.username == ADMIN_USERNAME))
                 ).scalar_one()
-                viewer = (
-                    await session.execute(select(User).where(User.username == "viewer"))
+                member = (
+                    await session.execute(select(User).where(User.username == MEMBER_USERNAME))
                 ).scalar_one()
                 with pytest.raises(AdminConflictError, match="不能移除最后一个管理员"):
                     await admin_service.update_user(
                         session,
-                        actor_id=viewer.id,
+                        actor_id=member.id,
                         user_id=admin.id,
-                        roles=["operator"],
+                        is_active=False,
                     )
         finally:
             await engine.dispose()
 
     asyncio.run(_run())
+
+
+# ---------- 余额调整 ----------
+
+
+def test_wallet_adjustment_updates_balance_and_transaction(client: TestClient) -> None:
+    admin = login(client)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
+
+    adjusted = client.post(
+        f"{ADMIN}/users/{member['user']['id']}/wallet-adjustments",
+        headers=_headers(admin),
+        json={"direction": "credit", "amount_cents": 50_000, "note": "活动补偿"},
+    )
+
+    assert adjusted.status_code == 200, adjusted.text
+    body = adjusted.json()
+    assert body["balance_cents"] == 200_000
+    assert body["roles"] == ["member"]
+    assert body["certification"] is None
+
+    transactions = client.get(
+        f"{API_V1}/wallet/transactions",
+        params={"type": "adjustment"},
+        headers=_headers(member),
+    ).json()
+    assert transactions["total"] == 1
+    assert transactions["items"][0]["description"] == "管理员调整：活动补偿"
+    assert transactions["items"][0]["direction"] == "credit"
+
+    debited = client.post(
+        f"{ADMIN}/users/{member['user']['id']}/wallet-adjustments",
+        headers=_headers(admin),
+        json={"direction": "debit", "amount_cents": 20_000, "note": "扣回"},
+    )
+    assert debited.status_code == 200
+    assert debited.json()["balance_cents"] == 180_000
+    # 余额调整不计入用量。
+    summary = client.get(f"{API_V1}/wallet", headers=_headers(member)).json()
+    assert summary["usage_total_cents"] == 0
+
+
+def test_wallet_adjustment_validation(client: TestClient) -> None:
+    admin = login(client)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
+    user_id = member["user"]["id"]
+
+    for payload in (
+        {"direction": "credit", "amount_cents": 0, "note": "x"},
+        {"direction": "credit", "amount_cents": 100_000_001, "note": "x"},
+        {"direction": "credit", "amount_cents": 1000, "note": ""},
+        {"direction": "credit", "amount_cents": 1000, "note": "x" * 121},
+        {"direction": "unknown", "amount_cents": 1000, "note": "x"},
+    ):
+        response = client.post(
+            f"{ADMIN}/users/{user_id}/wallet-adjustments",
+            headers=_headers(admin),
+            json=payload,
+        )
+        assert response.status_code == 422, payload
+
+    missing = client.post(
+        f"{ADMIN}/users/999999/wallet-adjustments",
+        headers=_headers(admin),
+        json={"direction": "credit", "amount_cents": 1000, "note": "补账"},
+    )
+    assert missing.status_code == 404
+
+
+def test_wallet_adjustment_debit_beyond_balance_conflicts(client: TestClient) -> None:
+    admin = login(client)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
+
+    response = client.post(
+        f"{ADMIN}/users/{member['user']['id']}/wallet-adjustments",
+        headers=_headers(admin),
+        json={"direction": "debit", "amount_cents": 10_000_000, "note": "超额"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "余额不足，无法扣减"
 
 
 # ---------- 兑换码 ----------
@@ -437,7 +632,7 @@ def test_list_and_filter_redeem_codes(client: TestClient) -> None:
 
 def test_disable_and_reenable_redeem_code(client: TestClient) -> None:
     admin = login(client)
-    viewer = login(client, VIEWER_USERNAME, VIEWER_PASSWORD)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
     created = _create_codes(client, admin, amount_cents=25_000, quantity=1)["items"][0]
 
     disabled = client.patch(
@@ -457,7 +652,7 @@ def test_disable_and_reenable_redeem_code(client: TestClient) -> None:
     assert again.status_code == 200
 
     blocked = client.post(
-        f"{API_V1}/wallet/redeem", headers=_headers(viewer), json={"code": created["code"]}
+        f"{API_V1}/wallet/redeem", headers=_headers(member), json={"code": created["code"]}
     )
     assert blocked.status_code == 409
     assert blocked.json()["detail"] == "兑换码已停用"
@@ -471,7 +666,7 @@ def test_disable_and_reenable_redeem_code(client: TestClient) -> None:
     assert enabled.json()["status"] == "active"
 
     redeemed = client.post(
-        f"{API_V1}/wallet/redeem", headers=_headers(viewer), json={"code": created["code"]}
+        f"{API_V1}/wallet/redeem", headers=_headers(member), json={"code": created["code"]}
     )
     assert redeemed.status_code == 200, redeemed.text
     assert redeemed.json()["amount_cents"] == 25_000
@@ -482,7 +677,7 @@ def test_used_redeem_code_cannot_change_status(client: TestClient) -> None:
     admin = login(client)
     used = _list_codes(client, admin, q="RDM-DEMO-2026-0002")["items"][0]
     assert used["status"] == "used"
-    assert used["used_by"]["display_name"] == "访客（演示）"
+    assert used["used_by"]["display_name"] == "会员（演示）"
 
     response = client.patch(
         f"{ADMIN}/redeem-codes/{used['id']}",
@@ -586,7 +781,7 @@ def test_get_settings_in_fixed_order(client: TestClient) -> None:
 
 def test_update_settings_and_wallet_reflects_changes(client: TestClient) -> None:
     admin = login(client)
-    viewer = login(client, VIEWER_USERNAME, VIEWER_PASSWORD)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
 
     response = client.patch(
         f"{ADMIN}/settings",
@@ -610,7 +805,7 @@ def test_update_settings_and_wallet_reflects_changes(client: TestClient) -> None
     assert items[0]["value"] == "STELLERA HUB 测试"
     assert items[1]["value"] == "help@stellera.example"
 
-    summary = client.get(f"{API_V1}/wallet", headers=_headers(viewer)).json()
+    summary = client.get(f"{API_V1}/wallet", headers=_headers(member)).json()
     assert summary["support_contact"] == "help@stellera.example"
     assert summary["recharge_note"] == "充值请联系平台客服（测试）。"
     assert summary["recharge_enabled"] is False

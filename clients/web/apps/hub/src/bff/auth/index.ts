@@ -8,5 +8,5 @@ export const authBff = new AuthBff(new HttpAuthGateway(), new BrowserTokenStore(
 export { AuthBff } from './service'
 export { HttpAuthGateway } from './gateway'
 export type { AuthGateway } from './gateway'
-export type { LoginCredentials } from './types'
+export type { LoginCredentials, RegisterCredentials } from './types'
 export type { SessionTokens, StoredAuth, TokenStore } from './token-store'

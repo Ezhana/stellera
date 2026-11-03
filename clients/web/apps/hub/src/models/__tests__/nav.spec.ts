@@ -11,9 +11,27 @@ describe('navForViewer', () => {
 
     expect(labels(groups)).toEqual(['平台', 'FDE 订单', '钱包'])
     expect(groups.some((group) => group.requiresAdmin)).toBe(false)
-    expect(groups.flatMap((group) => group.children.map((leaf) => leaf.label))).toContain(
-      '我的钱包',
+    expect(groups.flatMap((group) => group.children.map((leaf) => leaf.label))).toEqual(
+      expect.arrayContaining(['订单大厅', '我发布的', '我接到的', '我的申请', '我的钱包']),
     )
+  })
+
+  it('orders the FDE leaves as hall, published, assigned, applications', () => {
+    const fde = navForViewer({ isAdmin: false }).find((group) => group.key === 'fde')
+
+    expect(fde?.children.map((leaf) => leaf.routeName)).toEqual([
+      'fde-hall',
+      'fde-published',
+      'fde-assigned',
+      'fde-applications',
+    ])
+    expect(fde?.children.map((leaf) => leaf.label)).toEqual([
+      '订单大厅',
+      '我发布的',
+      '我接到的',
+      '我的申请',
+    ])
+    expect(fde?.children[0]?.meta).toBe('实时')
   })
 
   it('adds the admin group with all three console pages for admins', () => {

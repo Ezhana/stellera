@@ -6,7 +6,12 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { BffError } from '@/bff/errors'
 import { ordersBff } from '@/bff/orders'
 import type { OrderRealtimeHandlers } from '@/bff/orders'
-import { buildOrderView, buildViewer } from '@/bff/orders/__tests__/fixtures'
+import {
+  buildApplicationListModel,
+  buildApplicationView,
+  buildOrderView,
+  buildViewer,
+} from '@/bff/orders/__tests__/fixtures'
 import type { FdeOrderView, OrderListModel } from '@/models'
 import OrderHallPage from '@/pages/fde/OrderHallPage.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -18,11 +23,17 @@ vi.mock('@/bff/orders', async (importOriginal) => {
     ordersBff: {
       listOrders: vi.fn(),
       listMyOrders: vi.fn(),
+      listAssignedOrders: vi.fn(),
       getOrder: vi.fn(),
       createOrder: vi.fn(),
-      claimOrder: vi.fn(),
+      cancelOrder: vi.fn(),
       addWorkLog: vi.fn(),
-      completeOrder: vi.fn(),
+      applyForOrder: vi.fn(),
+      listMyApplications: vi.fn(),
+      listReceivedApplications: vi.fn(),
+      approveApplication: vi.fn(),
+      rejectApplication: vi.fn(),
+      withdrawApplication: vi.fn(),
       connectRealtime: vi.fn(),
     },
   }
@@ -30,7 +41,7 @@ vi.mock('@/bff/orders', async (importOriginal) => {
 
 const EmptyView = { template: '<div />' }
 
-const openOrder = buildOrderView({
+const myOrder = buildOrderView({
   id: '1',
   title: '医疗影像数据标注与质检',
   status: 'open',
@@ -41,15 +52,26 @@ const openOrder = buildOrderView({
   createdAt: '2026-11-01T00:00:00.000Z',
 })
 
-const inProgressOrder = buildOrderView({
+const openOrder = buildOrderView({
   id: '2',
   title: '金融风控模型交付',
+  status: 'open',
+  statusLabel: '待接单',
+  statusTone: 'warning',
+  publisherId: '99',
+  publisherName: '远山银行',
+  createdAt: '2026-10-30T00:00:00.000Z',
+})
+
+const inProgressOrder = buildOrderView({
+  id: '3',
+  title: '新能源调度算法交付',
   status: 'in_progress',
   statusLabel: '交付中',
   statusTone: 'info',
   publisherId: '99',
   publisherName: '远山银行',
-  createdAt: '2026-10-30T00:00:00.000Z',
+  createdAt: '2026-10-29T00:00:00.000Z',
 })
 
 function listModel(orders: FdeOrderView[]): OrderListModel {
@@ -93,6 +115,8 @@ async function mountPage(): Promise<MountResult> {
       { path: '/intro', name: 'intro', component: EmptyView },
       { path: '/fde/hall', name: 'fde-hall', component: EmptyView },
       { path: '/fde/published', name: 'fde-published', component: EmptyView },
+      { path: '/fde/assigned', name: 'fde-assigned', component: EmptyView },
+      { path: '/fde/applications', name: 'fde-applications', component: EmptyView },
       { path: '/wallet', name: 'wallet', component: EmptyView },
     ],
   })
@@ -102,6 +126,10 @@ async function mountPage(): Promise<MountResult> {
   const wrapper = mount(OrderHallPage, { global: { plugins: [pinia, router] } })
   await flushPromises()
   return { wrapper, router }
+}
+
+function findButton(wrapper: VueWrapper, label: string) {
+  return wrapper.findAll('button').find((button) => button.text() === label)
 }
 
 describe('OrderHallPage', () => {
@@ -116,10 +144,11 @@ describe('OrderHallPage', () => {
       nextHandlers.onStateChange('live')
       return { close: closeSpy }
     })
+    vi.mocked(ordersBff.listMyApplications).mockResolvedValue(buildApplicationListModel([]))
   })
 
   it('renders the loaded orders, stat cards and live indicator', async () => {
-    vi.mocked(ordersBff.listOrders).mockResolvedValue(listModel([openOrder, inProgressOrder]))
+    vi.mocked(ordersBff.listOrders).mockResolvedValue(listModel([myOrder, inProgressOrder]))
 
     const { wrapper } = await mountPage()
 
@@ -127,14 +156,15 @@ describe('OrderHallPage', () => {
     expect(ordersBff.connectRealtime).toHaveBeenCalledTimes(1)
     expect(wrapper.findAll('tbody tr')).toHaveLength(2)
     expect(wrapper.text()).toContain('医疗影像数据标注与质检')
-    expect(wrapper.text()).toContain('金融风控模型交付')
+    expect(wrapper.text()).toContain('新能源调度算法交付')
     expect(wrapper.text()).toContain('¥86,000')
     expect(wrapper.text()).toContain('实时同步')
     expect(wrapper.text()).toContain('我的发布')
+    expect(wrapper.text()).toContain('企业认证')
   })
 
   it('filters the loaded list client-side by status and keyword', async () => {
-    vi.mocked(ordersBff.listOrders).mockResolvedValue(listModel([openOrder, inProgressOrder]))
+    vi.mocked(ordersBff.listOrders).mockResolvedValue(listModel([myOrder, inProgressOrder]))
     const { wrapper } = await mountPage()
 
     const openTab = wrapper
@@ -144,7 +174,7 @@ describe('OrderHallPage', () => {
 
     expect(wrapper.findAll('tbody tr')).toHaveLength(1)
     expect(wrapper.text()).toContain('医疗影像数据标注与质检')
-    expect(wrapper.text()).not.toContain('金融风控模型交付')
+    expect(wrapper.text()).not.toContain('新能源调度算法交付')
 
     await wrapper.find('input[type="search"]').setValue('不存在的关键词')
 
@@ -155,7 +185,7 @@ describe('OrderHallPage', () => {
   it('shows an error alert and retries the request', async () => {
     vi.mocked(ordersBff.listOrders)
       .mockRejectedValueOnce(new BffError('network', '网络异常'))
-      .mockResolvedValueOnce(listModel([openOrder]))
+      .mockResolvedValueOnce(listModel([myOrder]))
 
     const { wrapper } = await mountPage()
 
@@ -178,15 +208,67 @@ describe('OrderHallPage', () => {
     expect(wrapper.text()).toContain('前往我发布的')
   })
 
-  it('applies realtime upserts and closes the feed on unmount', async () => {
+  it('offers 申请接单 on open orders published by others and submits an accept application', async () => {
+    vi.mocked(ordersBff.listOrders).mockResolvedValue(listModel([myOrder, openOrder]))
+    vi.mocked(ordersBff.applyForOrder).mockResolvedValue(buildApplicationView())
+
+    const { wrapper } = await mountPage()
+
+    const applyButtons = wrapper.findAll('button').filter((button) => button.text() === '申请接单')
+    expect(applyButtons).toHaveLength(1)
+
+    await applyButtons[0]!.trigger('click')
+    await flushPromises()
+
+    expect(ordersBff.applyForOrder).toHaveBeenCalledWith('2', 'accept')
+    expect(wrapper.text()).toContain('申请已提交，等待发布者审批')
+    expect(ordersBff.listOrders).toHaveBeenCalledTimes(2)
+  })
+
+  it('marks orders with a pending accept application as 已申请', async () => {
+    vi.mocked(ordersBff.listOrders).mockResolvedValue(
+      listModel([myOrder, openOrder, inProgressOrder]),
+    )
+    vi.mocked(ordersBff.listMyApplications).mockResolvedValue(
+      buildApplicationListModel([
+        buildApplicationView({
+          id: '9',
+          type: 'accept',
+          status: 'pending',
+          order: openOrder,
+        }),
+      ]),
+    )
+
+    const { wrapper } = await mountPage()
+
+    const disabled = wrapper.findAll('button').find((button) => button.text() === '已申请')
+    expect(disabled?.attributes('disabled')).toBeDefined()
+    expect(wrapper.findAll('button').some((button) => button.text() === '申请接单')).toBe(false)
+  })
+
+  it('shows a conflict message when the application is rejected', async () => {
     vi.mocked(ordersBff.listOrders).mockResolvedValue(listModel([openOrder]))
+    vi.mocked(ordersBff.applyForOrder).mockRejectedValue(
+      new BffError('conflict', '已有待审批的接单申请。'),
+    )
+
+    const { wrapper } = await mountPage()
+    await findButton(wrapper, '申请接单')?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已有待审批的接单申请。')
+  })
+
+  it('applies realtime upserts and closes the feed on unmount', async () => {
+    vi.mocked(ordersBff.listOrders).mockResolvedValue(listModel([myOrder]))
     const { wrapper } = await mountPage()
 
     expect(handlers).not.toBeNull()
 
     handlers?.onEvent({
       type: 'order.updated',
-      order: { ...openOrder, status: 'in_progress', statusLabel: '交付中', statusTone: 'info' },
+      order: { ...myOrder, status: 'in_progress', statusLabel: '交付中', statusTone: 'info' },
     })
     await flushPromises()
 
@@ -195,7 +277,7 @@ describe('OrderHallPage', () => {
     handlers?.onEvent({
       type: 'order.created',
       order: buildOrderView({
-        id: '3',
+        id: '4',
         title: '新能源调度算法交付',
         createdAt: '2026-11-02T00:00:00.000Z',
       }),

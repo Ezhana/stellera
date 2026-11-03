@@ -34,6 +34,25 @@ describe('wallet mapper type presentation', () => {
       label: '结算收入',
       tone: 'success',
     })
+    expect(formatTransactionType('adjustment')).toMatchObject({
+      type: 'adjustment',
+      label: '余额调整',
+      tone: 'info',
+    })
+  })
+
+  it('keeps the wire direction for an admin balance adjustment', () => {
+    const credit = toWalletTransactionView(
+      buildWalletTransactionDto({ type: 'adjustment', direction: 'credit', amount_cents: 50_000 }),
+    )
+    const debit = toWalletTransactionView(
+      buildWalletTransactionDto({ type: 'adjustment', direction: 'debit', amount_cents: 50_000 }),
+    )
+
+    expect(credit.typeLabel).toBe('余额调整')
+    expect(credit.amountLabel).toBe('+¥500')
+    expect(debit.direction).toBe('debit')
+    expect(debit.amountLabel).toBe('-¥500')
   })
 
   it('degrades unknown and empty types to the raw key with a default tone', () => {

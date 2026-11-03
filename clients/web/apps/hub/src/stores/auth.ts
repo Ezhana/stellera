@@ -2,7 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
 import { authBff } from '@/bff/auth'
-import type { LoginCredentials } from '@/bff/auth'
+import type { LoginCredentials, RegisterCredentials } from '@/bff/auth'
 import type { PermissionGroupView, RoleView, SessionView, ViewerProfile } from '@/models'
 
 export type AuthStatus = 'idle' | 'loading' | 'authenticated' | 'anonymous'
@@ -34,6 +34,23 @@ export const useAuthStore = defineStore('auth', () => {
     status.value = 'loading'
     try {
       const next = await authBff.login(credentials, remember)
+      setSession(next)
+      bootstrapped.value = true
+      return next
+    } catch (error) {
+      status.value = session.value ? 'authenticated' : 'anonymous'
+      throw error
+    }
+  }
+
+  /** Registration mirrors login: the backend returns a full session for the new member. */
+  async function register(
+    credentials: RegisterCredentials,
+    remember: boolean,
+  ): Promise<SessionView> {
+    status.value = 'loading'
+    try {
+      const next = await authBff.register(credentials, remember)
       setSession(next)
       bootstrapped.value = true
       return next
@@ -82,6 +99,7 @@ export const useAuthStore = defineStore('auth', () => {
     roles,
     permissionGroups,
     login,
+    register,
     bootstrap,
     logout,
   }

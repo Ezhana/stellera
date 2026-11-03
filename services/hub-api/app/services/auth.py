@@ -1,4 +1,4 @@
-"""认证业务逻辑：登录、刷新旋转、登出与用户角色读取。
+"""认证业务逻辑：注册、登录、刷新旋转、登出与用户角色读取。
 
 端点只负责 HTTP 语义（状态码、Cache-Control），业务规则集中在这里。
 """
@@ -8,7 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -17,14 +18,24 @@ from app.models.rbac import Role, UserRole
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.rbac.enforcer import EnforcerGuard, load_user_role_names
-from app.security.passwords import dummy_verify, verify_password
+from app.security.passwords import dummy_verify, hash_password, verify_password
 from app.security.tokens import IssuedToken, TokenError, TokenService, hash_token
+
+MEMBER_ROLE = "member"
 
 
 class AuthenticationError(Exception):
     """凭据/令牌无效；端点统一映射为 HTTP 401。"""
 
     def __init__(self, detail: str = "Invalid credentials") -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
+class AuthConflictError(Exception):
+    """注册冲突（用户名 / 邮箱已占用）；端点映射为 HTTP 409。"""
+
+    def __init__(self, detail: str = "用户名或邮箱已被占用") -> None:
         super().__init__(detail)
         self.detail = detail
 
@@ -56,6 +67,71 @@ class AuthService:
         self._settings = settings
         self._tokens = token_service
         self._guard = guard
+
+    # ---------- 注册 ----------
+    async def register(
+        self,
+        session: AsyncSession,
+        *,
+        username: str,
+        email: str,
+        full_name: str,
+        password: str,
+    ) -> TokenPair:
+        """公开注册：创建会员账号、授予 member 角色并直接签发令牌。
+
+        用户名 / 邮箱都已由 schema 归一成小写，这里再做一次大小写不敏感的唯一性检查；
+        并发注册由数据库唯一约束兜底。
+        """
+        normalized_username = username.strip().lower()
+        normalized_email = email.strip().lower()
+        conflict = (
+            await session.execute(
+                select(User.id)
+                .where(
+                    or_(
+                        func.lower(User.username) == normalized_username,
+                        func.lower(User.email) == normalized_email,
+                    )
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if conflict is not None:
+            raise AuthConflictError()
+
+        member_role_id = (
+            await session.execute(select(Role.id).where(Role.name == MEMBER_ROLE))
+        ).scalar_one_or_none()
+        if member_role_id is None:
+            raise AuthConflictError("角色数据未初始化，请联系管理员")
+
+        user = User(
+            username=normalized_username,
+            email=normalized_email,
+            hashed_password=hash_password(password),
+            full_name=full_name.strip(),
+            is_active=True,
+        )
+        session.add(user)
+        try:
+            await session.flush()
+        except IntegrityError as exc:
+            await session.rollback()
+            raise AuthConflictError() from exc
+
+        session.add(UserRole(user_id=user.id, role_id=member_role_id))
+        await session.flush()
+        # 先刷新 Casbin 投影再签发令牌，注册完成后立刻就能访问业务端点。
+        self._guard.resync_user(user.id, [MEMBER_ROLE])
+        pair = self._create_pair(session, user)
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            self._guard.resync_user(user.id, [])
+            raise AuthConflictError() from exc
+        return pair
 
     # ---------- 登录 ----------
     async def authenticate(self, session: AsyncSession, username: str, password: str) -> User:

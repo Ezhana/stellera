@@ -1,13 +1,14 @@
-"""钱包模块端到端测试：汇总、流水、兑换码与 FDE 订单资金联动。
+"""钱包模块端到端测试：汇总、流水、兑换码、FDE 订单资金联动与管理员调整。
 
 全部跑在临时 SQLite 上；种子数据在 TestClient 启动前写入（见 tests/conftest.py）。
-演示余额：viewer 150,000 分、enterprise 212,300,000 分、engineer 15,700,000 分。
+演示余额：member 150,000 / enterprise 212,300,000 / engineer 15,700,000 / admin 300,000,000。
 """
 
 from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,14 +26,15 @@ from tests.conftest import (
     ENGINEER_USERNAME,
     ENTERPRISE_PASSWORD,
     ENTERPRISE_USERNAME,
-    VIEWER_PASSWORD,
-    VIEWER_USERNAME,
+    MEMBER_PASSWORD,
+    MEMBER_USERNAME,
     auth_headers,
     login,
 )
 
 WALLET = f"{API_V1}/wallet"
 FDE = f"{API_V1}/fde"
+ADMIN = f"{API_V1}/admin"
 
 SUMMARY_FIELDS = {
     "balance_cents",
@@ -64,17 +66,17 @@ DEFAULT_SUPPORT_CONTACT = "support@stellera.example"
 # ---------- 测试辅助 ----------
 
 
-def _headers(pair: dict) -> dict[str, str]:
+def _headers(pair: dict[str, Any]) -> dict[str, str]:
     return auth_headers(pair["access_token"])
 
 
-def _summary(client: TestClient, pair: dict) -> dict:
+def _summary(client: TestClient, pair: dict[str, Any]) -> dict[str, Any]:
     response = client.get(WALLET, headers=_headers(pair))
     assert response.status_code == 200, response.text
     return response.json()
 
 
-def _transactions(client: TestClient, pair: dict, **params: str | int) -> dict:
+def _transactions(client: TestClient, pair: dict[str, Any], **params: str | int) -> dict[str, Any]:
     response = client.get(f"{WALLET}/transactions", params=params, headers=_headers(pair))
     assert response.status_code == 200, response.text
     return response.json()
@@ -82,11 +84,11 @@ def _transactions(client: TestClient, pair: dict, **params: str | int) -> dict:
 
 def _publish(
     client: TestClient,
-    pair: dict,
+    pair: dict[str, Any],
     *,
     price_cents: int = 1_000_000,
     title: str = "钱包联动测试订单",
-) -> dict:
+) -> dict[str, Any]:
     response = client.post(
         f"{FDE}/orders",
         headers=_headers(pair),
@@ -99,6 +101,60 @@ def _publish(
         },
     )
     assert response.status_code == 201, response.text
+    return response.json()
+
+
+def _apply(
+    client: TestClient,
+    pair: dict[str, Any],
+    order_id: int,
+    *,
+    application_type: str = "accept",
+) -> dict[str, Any]:
+    response = client.post(
+        f"{FDE}/orders/{order_id}/applications",
+        headers=_headers(pair),
+        json={"type": application_type},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def _approve(client: TestClient, pair: dict[str, Any], application_id: int) -> dict[str, Any]:
+    response = client.post(
+        f"{FDE}/applications/{application_id}/approve", headers=_headers(pair), json={}
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _accept_order(
+    client: TestClient,
+    publisher: dict[str, Any],
+    engineer: dict[str, Any],
+    *,
+    price_cents: int,
+) -> dict[str, Any]:
+    order = _publish(client, publisher, price_cents=price_cents)
+    application = _apply(client, engineer, order["id"])
+    return _approve(client, publisher, application["id"])["order"]
+
+
+def _adjust(
+    client: TestClient,
+    admin: dict[str, Any],
+    user_id: int,
+    *,
+    direction: str = "credit",
+    amount_cents: int = 50_000,
+    note: str = "补偿",
+) -> dict[str, Any]:
+    response = client.post(
+        f"{ADMIN}/users/{user_id}/wallet-adjustments",
+        headers=_headers(admin),
+        json={"direction": direction, "amount_cents": amount_cents, "note": note},
+    )
+    assert response.status_code == 200, response.text
     return response.json()
 
 
@@ -185,12 +241,13 @@ def test_wallet_endpoints_require_authentication(client: TestClient) -> None:
 # ---------- 汇总 ----------
 
 
-def test_viewer_wallet_summary(client: TestClient) -> None:
-    viewer = login(client, VIEWER_USERNAME, VIEWER_PASSWORD)
+def test_member_wallet_summary(client: TestClient) -> None:
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
 
-    body = _summary(client, viewer)
+    body = _summary(client, member)
 
     assert set(body) == SUMMARY_FIELDS
+    # 50,000 充值 + 100,000 演示兑换。
     assert body["balance_cents"] == 150_000
     assert body["usage_total_cents"] == 0
     assert body["recharge_total_cents"] == 50_000
@@ -224,13 +281,23 @@ def test_engineer_wallet_summary(client: TestClient) -> None:
     assert body["income_total_cents"] == 15_700_000
 
 
+def test_admin_wallet_summary(client: TestClient) -> None:
+    admin = login(client)
+
+    body = _summary(client, admin)
+
+    assert body["balance_cents"] == 300_000_000
+    assert body["recharge_total_cents"] == 300_000_000
+    assert body["usage_total_cents"] == 0
+
+
 # ---------- 流水 ----------
 
 
-def test_viewer_transactions_envelope_and_order(client: TestClient) -> None:
-    viewer = login(client, VIEWER_USERNAME, VIEWER_PASSWORD)
+def test_member_transactions_envelope_and_order(client: TestClient) -> None:
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
 
-    body = _transactions(client, viewer)
+    body = _transactions(client, member)
 
     assert set(body) == {"items", "total", "page", "page_size"}
     assert body["total"] == 2
@@ -295,9 +362,9 @@ def test_engineer_settlement_transactions(client: TestClient) -> None:
 def test_transactions_reject_invalid_query_params(
     client: TestClient, params: dict[str, str | int]
 ) -> None:
-    viewer = login(client, VIEWER_USERNAME, VIEWER_PASSWORD)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
 
-    response = client.get(f"{WALLET}/transactions", params=params, headers=_headers(viewer))
+    response = client.get(f"{WALLET}/transactions", params=params, headers=_headers(member))
 
     assert response.status_code == 422
 
@@ -306,12 +373,12 @@ def test_transactions_reject_invalid_query_params(
 
 
 def test_redeem_code_credits_wallet(client: TestClient) -> None:
-    viewer = login(client, VIEWER_USERNAME, VIEWER_PASSWORD)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
 
     response = client.post(
         f"{WALLET}/redeem",
         json={"code": "  rdm-demo-2026-0001  "},
-        headers=_headers(viewer),
+        headers=_headers(member),
     )
 
     assert response.status_code == 200, response.text
@@ -325,29 +392,29 @@ def test_redeem_code_credits_wallet(client: TestClient) -> None:
     assert body["transaction"]["amount_cents"] == 100_000
     assert body["transaction"]["balance_after_cents"] == 250_000
 
-    assert _summary(client, viewer)["balance_cents"] == 250_000
-    assert _transactions(client, viewer)["total"] == 3
+    assert _summary(client, member)["balance_cents"] == 250_000
+    assert _transactions(client, member)["total"] == 3
 
     # 兑换码变为已使用，且记录使用人。
     admin = login(client)
     codes = client.get(
-        f"{API_V1}/admin/redeem-codes",
+        f"{ADMIN}/redeem-codes",
         params={"q": "RDM-DEMO-2026-0001"},
         headers=_headers(admin),
     ).json()
     assert codes["total"] == 1
     assert codes["items"][0]["status"] == "used"
     assert codes["items"][0]["used_by"] == {
-        "id": viewer["user"]["id"],
-        "display_name": "访客（演示）",
+        "id": member["user"]["id"],
+        "display_name": "会员（演示）",
     }
 
 
 def test_redeem_unknown_code_is_404(client: TestClient) -> None:
-    viewer = login(client, VIEWER_USERNAME, VIEWER_PASSWORD)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
 
     response = client.post(
-        f"{WALLET}/redeem", json={"code": "RDM-NOPE-0000"}, headers=_headers(viewer)
+        f"{WALLET}/redeem", json={"code": "RDM-NOPE-0000"}, headers=_headers(member)
     )
 
     assert response.status_code == 404
@@ -355,10 +422,10 @@ def test_redeem_unknown_code_is_404(client: TestClient) -> None:
 
 
 def test_redeem_disabled_code_conflicts(client: TestClient) -> None:
-    viewer = login(client, VIEWER_USERNAME, VIEWER_PASSWORD)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
 
     response = client.post(
-        f"{WALLET}/redeem", json={"code": "RDM-DEMO-2026-0003"}, headers=_headers(viewer)
+        f"{WALLET}/redeem", json={"code": "RDM-DEMO-2026-0003"}, headers=_headers(member)
     )
 
     assert response.status_code == 409
@@ -367,31 +434,31 @@ def test_redeem_disabled_code_conflicts(client: TestClient) -> None:
 
 def test_redeem_expired_code_conflicts(settings: Settings, client: TestClient) -> None:
     _setup_expired_code(settings)
-    viewer = login(client, VIEWER_USERNAME, VIEWER_PASSWORD)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
 
     response = client.post(
-        f"{WALLET}/redeem", json={"code": "RDM-TEST-EXPIRED"}, headers=_headers(viewer)
+        f"{WALLET}/redeem", json={"code": "RDM-TEST-EXPIRED"}, headers=_headers(member)
     )
 
     assert response.status_code == 409
     assert response.json()["detail"] == "兑换码已过期"
-    assert _summary(client, viewer)["balance_cents"] == 150_000
+    assert _summary(client, member)["balance_cents"] == 150_000
 
 
 def test_redeem_twice_conflicts(client: TestClient) -> None:
-    viewer = login(client, VIEWER_USERNAME, VIEWER_PASSWORD)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
     first = client.post(
-        f"{WALLET}/redeem", json={"code": "RDM-DEMO-2026-0001"}, headers=_headers(viewer)
+        f"{WALLET}/redeem", json={"code": "RDM-DEMO-2026-0001"}, headers=_headers(member)
     )
     assert first.status_code == 200
 
     second = client.post(
-        f"{WALLET}/redeem", json={"code": "RDM-DEMO-2026-0001"}, headers=_headers(viewer)
+        f"{WALLET}/redeem", json={"code": "RDM-DEMO-2026-0001"}, headers=_headers(member)
     )
 
     assert second.status_code == 409
     assert second.json()["detail"] == "兑换码已被使用"
-    assert _summary(client, viewer)["balance_cents"] == 250_000
+    assert _summary(client, member)["balance_cents"] == 250_000
 
 
 # ---------- FDE 订单资金联动 ----------
@@ -434,17 +501,15 @@ def test_cancel_order_refunds_escrow(client: TestClient) -> None:
     assert latest["description"] == f"取消订单 {order['code']} 退款"
 
 
-def test_complete_order_settles_engineer(client: TestClient) -> None:
+def test_delivery_approval_settles_engineer(client: TestClient) -> None:
     enterprise = login(client, ENTERPRISE_USERNAME, ENTERPRISE_PASSWORD)
     engineer = login(client, ENGINEER_USERNAME, ENGINEER_PASSWORD)
-    order = _publish(client, enterprise, price_cents=2_000_000)
-    claimed = client.post(f"{FDE}/orders/{order['id']}/claim", headers=_headers(engineer))
-    assert claimed.status_code == 200
+    in_progress = _accept_order(client, enterprise, engineer, price_cents=2_000_000)
+    delivery = _apply(client, engineer, in_progress["id"], application_type="delivery")
 
-    completed = client.post(f"{FDE}/orders/{order['id']}/complete", headers=_headers(enterprise))
+    completed = _approve(client, enterprise, delivery["id"])
 
-    assert completed.status_code == 200
-    assert completed.json()["escrow_status"] == "released"
+    assert completed["order"]["escrow_status"] == "released"
     summary = _summary(client, engineer)
     assert summary["balance_cents"] == 17_700_000
     assert summary["income_total_cents"] == 17_700_000
@@ -454,8 +519,8 @@ def test_complete_order_settles_engineer(client: TestClient) -> None:
     assert latest["amount_cents"] == 2_000_000
     assert latest["balance_after_cents"] == 17_700_000
     assert latest["reference_type"] == "fde_order"
-    assert latest["reference_id"] == order["id"]
-    assert latest["description"] == f"订单 {order['code']} 结算"
+    assert latest["reference_id"] == in_progress["id"]
+    assert latest["description"] == f"订单 {in_progress['code']} 结算"
 
 
 def test_publish_order_with_insufficient_balance_conflicts(client: TestClient) -> None:
@@ -500,19 +565,115 @@ def test_cancel_legacy_order_without_escrow_does_not_refund(
     assert "order_refund" not in types
 
 
-def test_complete_legacy_order_without_escrow_does_not_settle(
+def test_delivery_approval_legacy_order_without_escrow_does_not_settle(
     settings: Settings, client: TestClient
 ) -> None:
     enterprise = login(client, ENTERPRISE_USERNAME, ENTERPRISE_PASSWORD)
     engineer = login(client, ENGINEER_USERNAME, ENGINEER_PASSWORD)
     order_id = _setup_legacy_order(settings, code="FDE-DEMO-9997", status="in_progress")
+    delivery = _apply(client, engineer, order_id, application_type="delivery")
 
-    response = client.post(f"{FDE}/orders/{order_id}/complete", headers=_headers(enterprise))
+    completed = _approve(client, enterprise, delivery["id"])
 
-    assert response.status_code == 200
-    assert response.json()["status"] == "completed"
+    assert completed["order"]["status"] == "completed"
     # 没有托管扣款流水，就不能凭空结算。
     assert _summary(client, engineer)["balance_cents"] == 15_700_000
     settlements = _transactions(client, engineer, type="order_settlement")
     assert settlements["total"] == 2
     assert all(item["reference_id"] != order_id for item in settlements["items"])
+
+
+# ---------- 管理员余额调整 ----------
+
+
+def test_admin_adjustment_credit_and_debit(client: TestClient) -> None:
+    admin = login(client)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
+    member_id = member["user"]["id"]
+
+    credited = _adjust(client, admin, member_id, direction="credit", amount_cents=50_000)
+    assert credited["balance_cents"] == 200_000
+    assert credited["id"] == member_id
+
+    summary = _summary(client, member)
+    assert summary["balance_cents"] == 200_000
+    # 管理员调整不算用量。
+    assert summary["usage_total_cents"] == 0
+    assert summary["income_total_cents"] == 0
+    latest = _transactions(client, member)["items"][0]
+    assert latest["type"] == "adjustment"
+    assert latest["direction"] == "credit"
+    assert latest["amount_cents"] == 50_000
+    assert latest["balance_after_cents"] == 200_000
+    assert latest["description"] == "管理员调整：补偿"
+
+    debited = _adjust(client, admin, member_id, direction="debit", amount_cents=20_000)
+    assert debited["balance_cents"] == 180_000
+    assert _summary(client, member)["balance_cents"] == 180_000
+    assert _summary(client, member)["usage_total_cents"] == 0
+
+    adjustments = _transactions(client, member, type="adjustment")
+    assert adjustments["total"] == 2
+    assert {item["direction"] for item in adjustments["items"]} == {"credit", "debit"}
+
+
+def test_adjustment_debit_beyond_balance_conflicts(client: TestClient) -> None:
+    admin = login(client)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
+
+    response = client.post(
+        f"{ADMIN}/users/{member['user']['id']}/wallet-adjustments",
+        headers=_headers(admin),
+        json={"direction": "debit", "amount_cents": 10_000_000, "note": "超额扣减"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "余额不足，无法扣减"
+    assert _summary(client, member)["balance_cents"] == 150_000
+
+
+def test_adjustment_requires_admin(client: TestClient) -> None:
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
+
+    response = client.post(
+        f"{ADMIN}/users/{member['user']['id']}/wallet-adjustments",
+        headers=_headers(member),
+        json={"direction": "credit", "amount_cents": 1_000, "note": "越权"},
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"direction": "credit", "amount_cents": 0, "note": "x"},
+        {"direction": "credit", "amount_cents": 100_000_001, "note": "x"},
+        {"direction": "credit", "amount_cents": 1_000, "note": ""},
+        {"direction": "credit", "amount_cents": 1_000, "note": "x" * 121},
+        {"direction": "unknown", "amount_cents": 1_000, "note": "x"},
+    ],
+)
+def test_adjustment_payload_validation(client: TestClient, payload: dict[str, object]) -> None:
+    admin = login(client)
+    member = login(client, MEMBER_USERNAME, MEMBER_PASSWORD)
+
+    response = client.post(
+        f"{ADMIN}/users/{member['user']['id']}/wallet-adjustments",
+        headers=_headers(admin),
+        json=payload,
+    )
+
+    assert response.status_code == 422
+
+
+def test_adjustment_unknown_user_is_404(client: TestClient) -> None:
+    admin = login(client)
+
+    response = client.post(
+        f"{ADMIN}/users/999999/wallet-adjustments",
+        headers=_headers(admin),
+        json={"direction": "credit", "amount_cents": 1_000, "note": "补账"},
+    )
+
+    assert response.status_code == 404

@@ -32,7 +32,9 @@ from app.schemas.admin import (
     SettingItemResponse,
     SettingsListResponse,
     SettingsUpdateRequest,
+    WalletAdjustmentRequest,
 )
+from app.schemas.fde import Certification as AdminCertification
 from app.services import admin as admin_service
 from app.services import system_settings as settings_service
 from app.services.admin import (
@@ -72,6 +74,7 @@ def _user_response(item: AdminUserItem) -> AdminUserResponse:
         full_name=user.full_name,
         is_active=user.is_active,
         roles=list(item.roles),
+        certification=cast(AdminCertification | None, item.certification),
         balance_cents=item.balance_cents,
         created_at=ensure_utc(user.created_at),
     )
@@ -158,20 +161,47 @@ async def update_user(
     session: SessionDep,
     guard: Annotated[EnforcerGuard, Depends(get_enforcer_guard)],
 ) -> AdminUserResponse:
-    """更新用户启用状态 / 角色；角色变更后立即刷新 Casbin 投影。"""
+    """更新用户资料 / 启用状态 / 认证状态；认证变更后立即刷新 Casbin 投影。"""
     await _require_admin(session, principal)
     try:
         item = await admin_service.update_user(
             session,
             actor_id=principal.user_id,
             user_id=user_id,
+            full_name=payload.full_name,
+            email=payload.email,
             is_active=payload.is_active,
-            roles=payload.roles,
+            certification=payload.certification,
         )
     except admin_service.AdminError as exc:
         raise _http_error(exc) from exc
-    if payload.roles is not None:
+    if payload.certification is not None:
         guard.resync_user(user_id, item.roles)
+    return _user_response(item)
+
+
+@router.post(
+    "/users/{user_id}/wallet-adjustments",
+    response_model=AdminUserResponse,
+)
+async def adjust_user_wallet(
+    user_id: int,
+    payload: WalletAdjustmentRequest,
+    principal: CurrentUserDep,
+    session: SessionDep,
+) -> AdminUserResponse:
+    """管理员余额调整：记一条 adjustment 流水，返回含新余额的用户项。"""
+    await _require_admin(session, principal)
+    try:
+        item = await admin_service.adjust_user_wallet(
+            session,
+            user_id=user_id,
+            direction=payload.direction,
+            amount_cents=payload.amount_cents,
+            note=payload.note,
+        )
+    except admin_service.AdminError as exc:
+        raise _http_error(exc) from exc
     return _user_response(item)
 
 

@@ -5,7 +5,14 @@ import { ApiError } from '@/lib/http'
 import type { OrderGateway } from '../gateway'
 import type { OrderRealtimeGateway, OrderRealtimeHandlers } from '../realtime'
 import { OrdersBff, type OrderTokenProvider } from '../service'
-import { buildOrderDetailDto, buildOrderDto, buildOrderListDto, buildWorkLogDto } from './fixtures'
+import {
+  buildApplicationDto,
+  buildApplicationListDto,
+  buildOrderDetailDto,
+  buildOrderDto,
+  buildOrderListDto,
+  buildWorkLogDto,
+} from './fixtures'
 
 function createGateway(): OrderGateway {
   return {
@@ -13,11 +20,21 @@ function createGateway(): OrderGateway {
     listMyOrders: vi.fn(async () =>
       buildOrderListDto([buildOrderDto({ id: 5, status: 'in_progress' })]),
     ),
+    listAssignedOrders: vi.fn(async () =>
+      buildOrderListDto([buildOrderDto({ id: 6, status: 'in_progress' })]),
+    ),
     getOrder: vi.fn(async () => buildOrderDetailDto()),
     createOrder: vi.fn(async () => buildOrderDto({ id: 8 })),
-    claimOrder: vi.fn(async () => buildOrderDto({ id: 9, status: 'in_progress' })),
+    cancelOrder: vi.fn(async () => buildOrderDto({ id: 8, status: 'cancelled' })),
     addWorkLog: vi.fn(async () => buildWorkLogDto()),
-    completeOrder: vi.fn(async () => buildOrderDto({ id: 9, status: 'completed' })),
+    applyForOrder: vi.fn(async () => buildApplicationDto()),
+    listMyApplications: vi.fn(async () => buildApplicationListDto()),
+    listReceivedApplications: vi.fn(async () =>
+      buildApplicationListDto([buildApplicationDto({ id: 2, type: 'delivery' })]),
+    ),
+    approveApplication: vi.fn(async () => buildApplicationDto({ status: 'approved' })),
+    rejectApplication: vi.fn(async () => buildApplicationDto({ status: 'rejected' })),
+    withdrawApplication: vi.fn(async () => buildApplicationDto({ status: 'withdrawn' })),
   }
 }
 
@@ -52,11 +69,14 @@ describe('OrdersBff', () => {
     expect(Number.isNaN(Date.parse(model.fetchedAt))).toBe(false)
   })
 
-  it('lists my orders', async () => {
-    const model = await bff.listMyOrders({ status: 'in_progress' })
+  it('lists my orders and my assigned orders', async () => {
+    const mine = await bff.listMyOrders({ status: 'in_progress' })
+    const assigned = await bff.listAssignedOrders({ status: 'in_progress' })
 
     expect(gateway.listMyOrders).toHaveBeenCalledWith('token-1', { status: 'in_progress' })
-    expect(model.stats.inProgressCount).toBe(1)
+    expect(mine.stats.inProgressCount).toBe(1)
+    expect(gateway.listAssignedOrders).toHaveBeenCalledWith('token-1', { status: 'in_progress' })
+    expect(assigned.orders[0]?.id).toBe('6')
   })
 
   it('maps an order detail with its logs', async () => {
@@ -83,20 +103,66 @@ describe('OrdersBff', () => {
     expect(order.priceLabel).toBe('¥86,000')
   })
 
-  it('claims, logs and completes an order', async () => {
-    const claimed = await bff.claimOrder('9')
-    const log = await bff.addWorkLog('9', { content: '完成首批标注', workedHours: 6 })
-    const completed = await bff.completeOrder('9')
+  it('cancels an open order and maps the cancelled status', async () => {
+    const order = await bff.cancelOrder('8')
 
-    expect(gateway.claimOrder).toHaveBeenCalledWith('token-1', '9')
-    expect(claimed.status).toBe('in_progress')
+    expect(gateway.cancelOrder).toHaveBeenCalledWith('token-1', '8')
+    expect(order.status).toBe('cancelled')
+    expect(order.statusLabel).toBe('已取消')
+  })
+
+  it('adds a work log for an in-progress order', async () => {
+    const log = await bff.addWorkLog('9', { content: '完成首批标注', workedHours: 6 })
+
     expect(gateway.addWorkLog).toHaveBeenCalledWith('token-1', '9', {
       content: '完成首批标注',
       workedHours: 6,
     })
     expect(log.workedHours).toBe(6)
-    expect(gateway.completeOrder).toHaveBeenCalledWith('token-1', '9')
-    expect(completed.statusLabel).toBe('已完成')
+  })
+
+  it('applies for an order and normalizes blank messages', async () => {
+    const application = await bff.applyForOrder('9', 'accept', '  有行业经验  ')
+
+    expect(gateway.applyForOrder).toHaveBeenCalledWith('token-1', '9', {
+      type: 'accept',
+      message: '有行业经验',
+    })
+    expect(application.typeLabel).toBe('接单申请')
+
+    await bff.applyForOrder('9', 'delivery', '   ')
+
+    expect(gateway.applyForOrder).toHaveBeenLastCalledWith('token-1', '9', {
+      type: 'delivery',
+      message: null,
+    })
+  })
+
+  it('lists my and received applications with the filter', async () => {
+    const mine = await bff.listMyApplications({ type: 'accept', status: 'pending', pageSize: 100 })
+    const received = await bff.listReceivedApplications({ status: 'pending', pageSize: 100 })
+
+    const filter = { type: 'accept', status: 'pending', pageSize: 100 }
+    expect(gateway.listMyApplications).toHaveBeenCalledWith('token-1', filter)
+    expect(mine.total).toBe(1)
+    expect(gateway.listReceivedApplications).toHaveBeenCalledWith('token-1', {
+      status: 'pending',
+      pageSize: 100,
+    })
+    expect(received.applications[0]?.typeLabel).toBe('交付申请')
+  })
+
+  it('approves, rejects and withdraws applications', async () => {
+    const approved = await bff.approveApplication('3', '请按说明交付')
+    const rejected = await bff.rejectApplication('3')
+    const withdrawn = await bff.withdrawApplication('3')
+
+    expect(gateway.approveApplication).toHaveBeenCalledWith('token-1', '3', '请按说明交付')
+    expect(approved.statusLabel).toBe('已通过')
+    expect(gateway.rejectApplication).toHaveBeenCalledWith('token-1', '3', undefined)
+    expect(rejected.statusLabel).toBe('已驳回')
+    expect(gateway.withdrawApplication).toHaveBeenCalledWith('token-1', '3')
+    expect(withdrawn.statusLabel).toBe('已撤回')
   })
 
   it('connects the realtime feed with the current token and handlers', () => {
@@ -119,7 +185,11 @@ describe('OrdersBff', () => {
       name: 'BffError',
       code: 'session-expired',
     })
+    await expect(bff.applyForOrder('9', 'accept')).rejects.toMatchObject({
+      code: 'session-expired',
+    })
     expect(gateway.listOrders).not.toHaveBeenCalled()
+    expect(gateway.applyForOrder).not.toHaveBeenCalled()
     expect(() => bff.connectRealtime({ onEvent: vi.fn(), onStateChange: vi.fn() })).toThrowError(
       expect.objectContaining({ code: 'session-expired' }),
     )
@@ -129,6 +199,9 @@ describe('OrdersBff', () => {
   it('normalizes transport errors into stable BffError codes', async () => {
     vi.mocked(gateway.listOrders).mockRejectedValueOnce(new ApiError(403, 'forbidden'))
     vi.mocked(gateway.createOrder).mockRejectedValueOnce(new ApiError(422, 'invalid input'))
+    vi.mocked(gateway.applyForOrder).mockRejectedValueOnce(
+      new ApiError(409, '已有待审批申请', '已有待审批申请'),
+    )
 
     await expect(bff.listOrders()).rejects.toMatchObject({ name: 'BffError', code: 'forbidden' })
     await expect(
@@ -140,5 +213,10 @@ describe('OrdersBff', () => {
         priceCents: 100,
       }),
     ).rejects.toMatchObject({ name: 'BffError', code: 'invalid-input' })
+    await expect(bff.applyForOrder('9', 'accept')).rejects.toMatchObject({
+      name: 'BffError',
+      code: 'conflict',
+      message: '已有待审批申请',
+    })
   })
 })

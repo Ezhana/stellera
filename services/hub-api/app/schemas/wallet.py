@@ -16,6 +16,7 @@ TransactionType = Literal[
     "order_payment",
     "order_refund",
     "order_settlement",
+    "adjustment",
 ]
 TransactionDirection = Literal["credit", "debit"]
 

@@ -6,7 +6,8 @@
 - 用户角色：`g, user:<id>, role:<name>`；
 - 所有用户额外加入 `role:authenticated`，保证登录后至少能访问 /auth/me 与 /auth/logout。
 
-policy 不落 CSV 文件；每次进程启动从数据库重新加载。角色变更在下次登录/重启后生效。
+policy 不落 CSV 文件；每次进程启动从数据库重新加载。角色变更在下次登录/重启后
+生效（管理端调整认证状态时会立即 resync 该用户）。
 """
 
 from __future__ import annotations

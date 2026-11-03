@@ -21,8 +21,10 @@ export {
   toAdminUserView,
 } from './mapper'
 export type {
+  AdminCertificationInput,
   AdminRedeemCodeFilter,
   AdminUserFilter,
+  AdminWalletAdjustmentInput,
   CreateRedeemCodeInput,
   UpdateAdminUserInput,
 } from './types'

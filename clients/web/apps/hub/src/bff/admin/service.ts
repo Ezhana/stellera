@@ -24,6 +24,7 @@ import {
 import type {
   AdminRedeemCodeFilter,
   AdminUserFilter,
+  AdminWalletAdjustmentInput,
   CreateRedeemCodeInput,
   UpdateAdminUserInput,
 } from './types'
@@ -63,6 +64,16 @@ export class AdminBff {
     const token = this.requireToken()
     try {
       return toAdminUserView(await this.gateway.updateUser(token, id, input))
+    } catch (error) {
+      throw toBffError(error, 'admin')
+    }
+  }
+
+  /** Adjust a user's balance and return the refreshed user row (with the new balance). */
+  async walletAdjustment(id: string, input: AdminWalletAdjustmentInput): Promise<AdminUserView> {
+    const token = this.requireToken()
+    try {
+      return toAdminUserView(await this.gateway.walletAdjustment(token, id, input))
     } catch (error) {
       throw toBffError(error, 'admin')
     }

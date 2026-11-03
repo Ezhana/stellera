@@ -4,7 +4,7 @@ import { z } from 'zod'
  * Wire schemas for the FDE order API.
  *
  * This is the only place in the frontend that knows backend field names (`price_cents`,
- * `escrow_status`, …). Everything above this layer consumes camelCase page models.
+ * `escrow_status`, `review_note`, …). Everything above this layer consumes camelCase page models.
  *
  * Enum-like fields intentionally parse as `z.string()`: a new backend status must never make the
  * order hall crash. The mapper degrades unknown values to the raw key + a default tone.
@@ -18,6 +18,10 @@ export const orderPartyDtoSchema = z.object({
     .string()
     .nullish()
     .transform((value) => value ?? ''),
+  certification: z
+    .string()
+    .nullish()
+    .transform((value) => value ?? null),
 })
 
 export const orderDtoSchema = z.object({
@@ -101,8 +105,51 @@ export const orderDetailDtoSchema = orderDtoSchema.extend({
     .transform((value) => value ?? []),
 })
 
+export const applicationDtoSchema = z.object({
+  id: idDtoSchema,
+  order: orderDtoSchema,
+  type: z.string(),
+  status: z.string(),
+  message: z
+    .string()
+    .nullish()
+    .transform((value) => value ?? null),
+  review_note: z
+    .string()
+    .nullish()
+    .transform((value) => value ?? null),
+  applicant: orderPartyDtoSchema,
+  reviewer: orderPartyDtoSchema.nullish().transform((value) => value ?? null),
+  reviewed_at: z
+    .string()
+    .nullish()
+    .transform((value) => value ?? null),
+  created_at: z.string(),
+})
+
+export const applicationListDtoSchema = z.object({
+  items: z
+    .array(applicationDtoSchema)
+    .nullish()
+    .transform((value) => value ?? []),
+  total: z
+    .number()
+    .nullish()
+    .transform((value) => value ?? 0),
+  page: z
+    .number()
+    .nullish()
+    .transform((value) => value ?? 1),
+  page_size: z
+    .number()
+    .nullish()
+    .transform((value) => value ?? 0),
+})
+
 export type OrderPartyDto = z.infer<typeof orderPartyDtoSchema>
 export type OrderDto = z.infer<typeof orderDtoSchema>
 export type WorkLogDto = z.infer<typeof workLogDtoSchema>
 export type OrderListDto = z.infer<typeof orderListDtoSchema>
 export type OrderDetailDto = z.infer<typeof orderDetailDtoSchema>
+export type ApplicationDto = z.infer<typeof applicationDtoSchema>
+export type ApplicationListDto = z.infer<typeof applicationListDtoSchema>

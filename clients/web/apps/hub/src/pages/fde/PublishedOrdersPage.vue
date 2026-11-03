@@ -19,23 +19,28 @@ import UiIcon from '@/components/ui/UiIcon.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import ConsoleLayout from '@/layouts/ConsoleLayout.vue'
 import { FDE_INDUSTRIES, type FdeOrderStatus, type FdeOrderView } from '@/models'
+import type { OrderApplicationView } from '@/models'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
 
 const viewer = computed(() => auth.viewer)
 const viewerId = computed(() => auth.viewer?.id ?? '')
-const canPublish = computed(() => auth.viewer?.capabilities.publishOrder ?? false)
 
 const orders = ref<FdeOrderView[]>([])
+const receivedApplications = ref<OrderApplicationView[]>([])
 const loading = ref(true)
 const refreshing = ref(false)
 const errorMessage = ref('')
+const actionError = ref('')
 const statusFilter = ref<FdeOrderStatus | 'all'>('all')
 const realtimeState = ref<OrderRealtimeState>('connecting')
 const lastEventLabel = ref('')
 const announcement = ref('')
 const highlightedId = ref<string | null>(null)
+const confirmingCancelId = ref<string | null>(null)
+const cancellingOrderId = ref<string | null>(null)
+const approvingOrderId = ref<string | null>(null)
 
 const formOpen = ref(false)
 const submitting = ref(false)
@@ -97,9 +102,35 @@ const filteredOrders = computed(() =>
     : orders.value.filter((order) => order.status === statusFilter.value),
 )
 
+/** Group received pending applications by order so row actions can read them cheaply. */
+const pendingApplicationsByOrder = computed(() => {
+  const map = new Map<string, OrderApplicationView[]>()
+  for (const application of receivedApplications.value) {
+    if (application.status !== 'pending') continue
+    const list = map.get(application.order.id) ?? []
+    list.push(application)
+    map.set(application.order.id, list)
+  }
+  return map
+})
+
+function pendingApplications(
+  order: FdeOrderView,
+  type: 'accept' | 'delivery',
+): OrderApplicationView[] {
+  return (pendingApplicationsByOrder.value.get(order.id) ?? []).filter(
+    (application) => application.type === type,
+  )
+}
+
 /** Map the BFF's stable error codes to page copy; the page never inspects HTTP statuses. */
-function toErrorMessage(error: unknown, scope: 'load' | 'publish'): string {
-  const fallback = scope === 'load' ? '需求加载失败，请稍后重试。' : '发布失败，请稍后重试。'
+function toErrorMessage(error: unknown, scope: 'load' | 'publish' | 'action'): string {
+  const fallback =
+    scope === 'load'
+      ? '需求加载失败，请稍后重试。'
+      : scope === 'action'
+        ? '操作失败，请稍后重试。'
+        : '发布失败，请稍后重试。'
   if (!(error instanceof BffError)) return fallback
 
   switch (error.code) {
@@ -108,7 +139,11 @@ function toErrorMessage(error: unknown, scope: 'load' | 'publish'): string {
     case 'forbidden':
       return scope === 'load'
         ? '当前账号没有查看需求的权限。'
-        : '当前账号没有发布需求的权限，请联系管理员。'
+        : scope === 'action'
+          ? '当前账号没有操作该订单的权限。'
+          : '当前账号没有发布需求的权限，请联系管理员。'
+    case 'not-found':
+      return '订单不存在或已被移除，请刷新后重试。'
     case 'invalid-input':
       return error.message || '提交的内容不符合要求，请检查后重试。'
     case 'conflict':
@@ -138,11 +173,21 @@ async function loadOrders(showLoading = true): Promise<void> {
   }
 }
 
+/** Load every pending application received on my published orders. */
+async function loadReceivedApplications(): Promise<void> {
+  try {
+    const model = await ordersBff.listReceivedApplications({ status: 'pending', pageSize: 100 })
+    receivedApplications.value = model.applications
+  } catch {
+    receivedApplications.value = []
+  }
+}
+
 async function refresh(): Promise<void> {
   if (refreshing.value) return
   refreshing.value = true
   try {
-    await loadOrders(false)
+    await Promise.all([loadOrders(false), loadReceivedApplications()])
   } finally {
     refreshing.value = false
   }
@@ -241,6 +286,57 @@ function highlightRow(orderId: string): void {
   }, 2_000)
 }
 
+/** First click arms the confirmation, the second click actually cancels the order. */
+function requestCancel(order: FdeOrderView): void {
+  if (confirmingCancelId.value === order.id) {
+    void cancelOrder(order)
+    return
+  }
+  actionError.value = ''
+  confirmingCancelId.value = order.id
+}
+
+async function cancelOrder(order: FdeOrderView): Promise<void> {
+  if (cancellingOrderId.value) return
+  cancellingOrderId.value = order.id
+  actionError.value = ''
+  successMessage.value = ''
+
+  try {
+    const updated = await ordersBff.cancelOrder(order.id)
+    orders.value = upsertOrder(orders.value, updated)
+    confirmingCancelId.value = null
+    successMessage.value = '订单已取消，托管资金已退回。'
+    announcement.value = `已取消订单：${order.title}`
+  } catch (error) {
+    actionError.value = toErrorMessage(error, 'action')
+  } finally {
+    cancellingOrderId.value = null
+  }
+}
+
+/** Confirm the latest pending delivery application for one of my in-progress orders. */
+async function approveDelivery(order: FdeOrderView): Promise<void> {
+  if (approvingOrderId.value) return
+  const application = pendingApplications(order, 'delivery')[0]
+  if (!application) return
+
+  approvingOrderId.value = order.id
+  actionError.value = ''
+  successMessage.value = ''
+
+  try {
+    await ordersBff.approveApplication(application.id)
+    successMessage.value = '已确认交付，托管资金已结算给工程师。'
+    announcement.value = `已确认交付：${order.title}`
+    await Promise.all([loadOrders(false), loadReceivedApplications()])
+  } catch (error) {
+    actionError.value = toErrorMessage(error, 'action')
+  } finally {
+    approvingOrderId.value = null
+  }
+}
+
 function connectRealtime(): void {
   try {
     connection = ordersBff.connectRealtime({
@@ -270,7 +366,7 @@ function connectRealtime(): void {
 }
 
 onMounted(async () => {
-  await loadOrders()
+  await Promise.all([loadOrders(), loadReceivedApplications()])
   connectRealtime()
 })
 
@@ -297,7 +393,7 @@ onBeforeUnmount(() => {
             <UiIcon name="arrow-left" :size="16" />
             返回订单大厅
           </RouterLink>
-          <UiButton v-if="canPublish" variant="secondary" @click="toggleForm">
+          <UiButton variant="secondary" @click="toggleForm">
             {{ formOpen ? '收起表单' : '发布需求' }}
           </UiButton>
           <LiveStatus :state="realtimeState" :last-event-label="lastEventLabel || undefined" />
@@ -309,18 +405,24 @@ onBeforeUnmount(() => {
       <UiAlert
         v-if="successMessage"
         variant="success"
-        title="发布成功"
+        title="操作成功"
         dismissible
         @close="successMessage = ''"
       >
         {{ successMessage }}
       </UiAlert>
 
-      <UiAlert v-if="!canPublish" variant="info" title="无发布权限">
-        当前账号可以浏览已发布需求；发布需求需要企业或管理员账号，请联系管理员开通权限。
+      <UiAlert
+        v-if="actionError"
+        variant="error"
+        title="操作失败"
+        dismissible
+        @close="actionError = ''"
+      >
+        {{ actionError }}
       </UiAlert>
 
-      <UiCard v-if="formOpen && canPublish" elevated padding="lg" class="publish-form">
+      <UiCard v-if="formOpen" elevated padding="lg" class="publish-form">
         <header class="publish-form__header">
           <p class="hub-eyebrow">PUBLISH ORDER</p>
           <h2 class="publish-form__title">发布新需求</h2>
@@ -447,9 +549,7 @@ onBeforeUnmount(() => {
           "
         >
           <template #action>
-            <UiButton v-if="canPublish" variant="secondary" @click="openForm">
-              发布第一条需求
-            </UiButton>
+            <UiButton variant="secondary" @click="openForm">发布第一条需求</UiButton>
           </template>
         </OrderEmptyState>
 
@@ -460,7 +560,39 @@ onBeforeUnmount(() => {
           caption="我发布的订单列表"
           show-work-log
           :highlighted-id="highlightedId"
-        />
+        >
+          <template #actions="{ order }">
+            <template v-if="order.status === 'open'">
+              <RouterLink
+                v-if="pendingApplications(order, 'accept').length"
+                class="order-page__link-button order-page__link-button--inline"
+                :to="{ name: 'fde-applications', query: { tab: 'received' } }"
+              >
+                {{ pendingApplications(order, 'accept').length }} 条接单申请
+              </RouterLink>
+              <UiButton
+                variant="ghost"
+                size="sm"
+                :loading="cancellingOrderId === order.id"
+                @click="requestCancel(order)"
+              >
+                {{ confirmingCancelId === order.id ? '确认取消' : '取消订单' }}
+              </UiButton>
+            </template>
+            <template v-else-if="order.status === 'in_progress'">
+              <UiButton
+                v-if="pendingApplications(order, 'delivery').length"
+                size="sm"
+                :loading="approvingOrderId === order.id"
+                @click="approveDelivery(order)"
+              >
+                确认交付
+              </UiButton>
+              <span v-else class="order-page__action-hint">等待交付申请</span>
+            </template>
+            <span v-else class="order-page__action-hint">—</span>
+          </template>
+        </OrderTable>
       </section>
     </div>
   </ConsoleLayout>
@@ -653,6 +785,18 @@ onBeforeUnmount(() => {
 .order-page__result {
   color: var(--color-fg-muted);
   font-size: var(--font-size-caption);
+}
+
+.order-page__link-button--inline {
+  min-height: 36px;
+  padding: 0 var(--primitive-space-3);
+  font-size: var(--font-size-caption);
+}
+
+.order-page__action-hint {
+  color: var(--obsidian-tertiary-text);
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
 }
 
 .order-page__state {

@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 vi.mock('@/bff/auth', () => ({
   authBff: {
     login: vi.fn(),
+    register: vi.fn(),
     restore: vi.fn(),
     logout: vi.fn(),
   },
@@ -22,6 +23,7 @@ const viewer: ViewerProfile = {
   status: 'active',
   statusLabel: '已启用',
   isAdmin: true,
+  certification: null,
   roles: [{ key: 'admin', label: '管理员', tone: 'accent' }],
   permissionGroups: [
     {
@@ -34,9 +36,8 @@ const viewer: ViewerProfile = {
   permissionCount: 1,
   capabilities: {
     publishOrder: true,
-    claimOrder: true,
+    applyOrder: true,
     submitOrderLog: true,
-    completeOrder: true,
     viewWallet: true,
     redeemCode: true,
     manageAdmin: true,
@@ -72,6 +73,50 @@ describe('auth store', () => {
     expect(store.roles).toEqual(viewer.roles)
     expect(store.permissionGroups).toEqual(viewer.permissionGroups)
     expect(store.bootstrapped).toBe(true)
+  })
+
+  it('delegates registration to the BFF and stores the returned session', async () => {
+    vi.mocked(authBff.register).mockResolvedValue({ ...session, remember: false })
+
+    const store = useAuthStore()
+    const result = await store.register(
+      {
+        username: 'newbie',
+        email: 'newbie@example.com',
+        fullName: '新会员',
+        password: 'secret123',
+      },
+      false,
+    )
+
+    expect(authBff.register).toHaveBeenCalledWith(
+      {
+        username: 'newbie',
+        email: 'newbie@example.com',
+        fullName: '新会员',
+        password: 'secret123',
+      },
+      false,
+    )
+    expect(result.remember).toBe(false)
+    expect(store.status).toBe('authenticated')
+    expect(store.isAuthenticated).toBe(true)
+    expect(store.bootstrapped).toBe(true)
+  })
+
+  it('returns to anonymous when registration fails', async () => {
+    vi.mocked(authBff.register).mockRejectedValue(new Error('conflict'))
+
+    const store = useAuthStore()
+
+    await expect(
+      store.register(
+        { username: 'luna', email: 'luna@example.com', fullName: 'Luna', password: 'secret123' },
+        false,
+      ),
+    ).rejects.toThrow('conflict')
+    expect(store.session).toBeNull()
+    expect(store.status).toBe('anonymous')
   })
 
   it('clears the session on logout even when the BFF fails', async () => {

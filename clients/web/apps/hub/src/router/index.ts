@@ -27,6 +27,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '登录', publicOnly: true },
   },
   {
+    path: '/register',
+    name: 'register',
+    component: () => import('@/pages/RegisterPage.vue'),
+    meta: { title: '注册', publicOnly: true },
+  },
+  {
     // 平台简介：轮播图 + 叙事，作为登录后的默认落地页。
     path: '/intro',
     name: 'intro',
@@ -49,6 +55,18 @@ const routes: RouteRecordRaw[] = [
     name: 'fde-published',
     component: () => import('@/pages/fde/PublishedOrdersPage.vue'),
     meta: { title: '我发布的', requiresAuth: true },
+  },
+  {
+    path: '/fde/assigned',
+    name: 'fde-assigned',
+    component: () => import('@/pages/fde/AssignedOrdersPage.vue'),
+    meta: { title: '我接到的', requiresAuth: true },
+  },
+  {
+    path: '/fde/applications',
+    name: 'fde-applications',
+    component: () => import('@/pages/fde/ApplicationsPage.vue'),
+    meta: { title: '我的申请', requiresAuth: true },
   },
   {
     path: '/wallet',

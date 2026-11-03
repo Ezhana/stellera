@@ -2,18 +2,11 @@
 # 时间字段是相对“当前时间”的天数偏移，保证反复执行时顺序与结果稳定。
 
 [[users]]
-username = "operator"
-email = "operator@example.com"
-password = "operator12345"
-full_name = "运营（演示）"
-role = "operator"
-
-[[users]]
-username = "viewer"
-email = "viewer@example.com"
-password = "viewer12345"
-full_name = "访客（演示）"
-role = "viewer"
+username = "member"
+email = "member@example.com"
+password = "member12345"
+full_name = "会员（演示）"
+role = "member"
 
 [[users]]
 username = "enterprise"
@@ -195,18 +188,15 @@ worked_hours = 4.0
 days_ago = 57
 
 # 演示钱包：初始余额通过“线下充值（演示）”流水入账，保证余额与流水一致。
-# enterprise 的初始余额要覆盖 10 条演示订单托管（合计 87,700,000 分）。
+# member = 50,000 充值 + 100,000 兑换 = 150,000；enterprise 的初始余额要覆盖
+# 10 条演示订单托管（合计 87,700,000 分），结算后工程师余额 15,700,000。
 
 [[wallets]]
 username = "admin"
 initial_balance_cents = 300_000_000
 
 [[wallets]]
-username = "operator"
-initial_balance_cents = 200_000
-
-[[wallets]]
-username = "viewer"
+username = "member"
 initial_balance_cents = 50_000
 
 [[wallets]]
@@ -217,7 +207,7 @@ initial_balance_cents = 300_000_000
 username = "engineer"
 initial_balance_cents = 0
 
-# 演示兑换码：active 可兑换、used 已由 viewer 使用、disabled 已停用。
+# 演示兑换码：active 可兑换、used 已由 member 使用、disabled 已停用。
 
 [[redeem_codes]]
 code = "RDM-DEMO-2026-0001"
@@ -230,7 +220,7 @@ code = "RDM-DEMO-2026-0002"
 amount_cents = 100_000
 status = "used"
 note = "企业礼包（演示）"
-used_by_username = "viewer"
+used_by_username = "member"
 
 [[redeem_codes]]
 code = "RDM-DEMO-2026-0003"

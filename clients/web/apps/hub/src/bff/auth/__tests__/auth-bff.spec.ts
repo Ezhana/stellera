@@ -7,24 +7,23 @@ import { AuthBff } from '../service'
 import { deriveInitials } from '../mapper'
 import type { StoredAuth, TokenStore } from '../token-store'
 
-const viewerUser: UserDto = {
+const memberUser: UserDto = {
   id: 7,
-  username: 'viewer',
-  email: 'viewer@example.com',
-  full_name: '只读成员',
+  username: 'member',
+  email: 'member@example.com',
+  full_name: '会员（演示）',
   is_active: true,
-  roles: ['viewer'],
+  roles: ['member'],
   permissions: [
-    { object: '/api/v1/fde/orders', action: '^GET$' },
-    { object: '/api/v1/fde/orders/*', action: '^GET$' },
     { object: '/api/v1/auth/me', action: '^GET$' },
+    { object: '/api/v1/fde/orders', action: '^GET$' },
   ],
 }
 
 const loginDto: LoginResponseDto = {
   access_token: 'access-1',
   refresh_token: 'refresh-1',
-  user: viewerUser,
+  user: memberUser,
 }
 
 class MemoryTokenStore implements TokenStore {
@@ -46,8 +45,9 @@ class MemoryTokenStore implements TokenStore {
 function createGateway(): AuthGateway {
   return {
     login: vi.fn(async () => loginDto),
+    register: vi.fn(async () => loginDto),
     refresh: vi.fn(async () => ({ access_token: 'access-2', refresh_token: 'refresh-2' })),
-    me: vi.fn(async () => viewerUser),
+    me: vi.fn(async () => memberUser),
     logout: vi.fn(async () => undefined),
   }
 }
@@ -64,27 +64,27 @@ describe('AuthBff', () => {
   })
 
   it('maps the backend user DTO into a stable viewer page model', async () => {
-    const session = await bff.login({ username: 'viewer', password: 'secret' }, true)
+    const session = await bff.login({ username: 'member', password: 'secret' }, true)
 
-    expect(gateway.login).toHaveBeenCalledWith({ username: 'viewer', password: 'secret' })
+    expect(gateway.login).toHaveBeenCalledWith({ username: 'member', password: 'secret' })
     expect(session.remember).toBe(true)
     expect(session.viewer).toMatchObject({
       id: '7',
-      username: 'viewer',
-      displayName: '只读成员',
-      email: 'viewer@example.com',
-      initials: '只读',
+      username: 'member',
+      displayName: '会员（演示）',
+      email: 'member@example.com',
+      initials: '会员',
       status: 'active',
       statusLabel: '已启用',
       isAdmin: false,
-      permissionCount: 3,
+      certification: null,
+      permissionCount: 2,
     })
-    expect(session.viewer.roles).toEqual([{ key: 'viewer', label: '只读成员', tone: 'default' }])
+    expect(session.viewer.roles).toEqual([{ key: 'member', label: '会员', tone: 'default' }])
     expect(session.viewer.capabilities).toEqual({
       publishOrder: false,
-      claimOrder: false,
+      applyOrder: false,
       submitOrderLog: false,
-      completeOrder: false,
       viewWallet: false,
       redeemCode: false,
       manageAdmin: false,
@@ -93,7 +93,6 @@ describe('AuthBff', () => {
       '账户资料',
       'FDE 订单',
     ])
-    expect(session.viewer.permissionGroups[1]?.actions).toEqual([{ key: 'GET', label: '查看' }])
     expect(tokenStore.value).toEqual({
       tokens: { accessToken: 'access-1', refreshToken: 'refresh-1' },
       remember: true,
@@ -101,17 +100,61 @@ describe('AuthBff', () => {
     expect(session.authenticatedAt).toEqual(expect.any(String))
   })
 
-  it('derives FDE capabilities from enterprise and engineer policies', async () => {
+  it('registers through the public endpoint and persists the returned session', async () => {
+    const session = await bff.register(
+      {
+        username: 'newbie',
+        email: 'newbie@example.com',
+        fullName: '新会员',
+        password: 'secret123',
+      },
+      false,
+    )
+
+    expect(gateway.register).toHaveBeenCalledWith({
+      username: 'newbie',
+      email: 'newbie@example.com',
+      fullName: '新会员',
+      password: 'secret123',
+    })
+    expect(gateway.login).not.toHaveBeenCalled()
+    expect(session.viewer.username).toBe('member')
+    expect(session.remember).toBe(false)
+    expect(tokenStore.value).toEqual({
+      tokens: { accessToken: 'access-1', refreshToken: 'refresh-1' },
+      remember: false,
+    })
+  })
+
+  it('normalizes a duplicate registration into conflict', async () => {
+    vi.mocked(gateway.register).mockRejectedValueOnce(
+      new ApiError(409, '用户名或邮箱已被占用', '用户名或邮箱已被占用'),
+    )
+
+    await expect(
+      bff.register(
+        {
+          username: 'member',
+          email: 'member@example.com',
+          fullName: '会员',
+          password: 'secret123',
+        },
+        false,
+      ),
+    ).rejects.toMatchObject({ name: 'BffError', code: 'conflict' })
+    expect(tokenStore.value).toBeNull()
+  })
+
+  it('derives certifications and capabilities from enterprise and engineer roles', async () => {
     vi.mocked(gateway.login).mockResolvedValueOnce({
       access_token: 'access-1',
       refresh_token: 'refresh-1',
       user: {
-        ...viewerUser,
+        ...memberUser,
         roles: ['enterprise', 'engineer'],
         permissions: [
           { object: '/api/v1/fde/orders', action: '^POST$' },
-          { object: '/api/v1/fde/orders/*/complete', action: '^POST$' },
-          { object: '/api/v1/fde/orders/*/claim', action: '^POST$' },
+          { object: '/api/v1/fde/orders/*/applications', action: '^POST$' },
           { object: '/api/v1/fde/orders/*/logs', action: '^POST$' },
         ],
       },
@@ -119,15 +162,27 @@ describe('AuthBff', () => {
 
     const session = await bff.login({ username: 'enterprise', password: 'secret' }, false)
 
+    expect(session.viewer.certification).toBe('enterprise')
+    expect(session.viewer.roles.map((role) => role.key)).toEqual(['enterprise', 'engineer'])
     expect(session.viewer.capabilities).toEqual({
       publishOrder: true,
-      claimOrder: true,
+      applyOrder: true,
       submitOrderLog: true,
-      completeOrder: true,
       viewWallet: false,
       redeemCode: false,
       manageAdmin: false,
     })
+  })
+
+  it('derives the engineer certification for engineer-only roles', async () => {
+    vi.mocked(gateway.login).mockResolvedValueOnce({
+      access_token: 'access-1',
+      refresh_token: 'refresh-1',
+      user: { ...memberUser, roles: ['engineer'] },
+    })
+
+    const session = await bff.login({ username: 'engineer', password: 'secret' }, false)
+    expect(session.viewer.certification).toBe('engineer')
   })
 
   it('derives wallet and admin capabilities from their policy probes', async () => {
@@ -135,7 +190,7 @@ describe('AuthBff', () => {
       access_token: 'access-1',
       refresh_token: 'refresh-1',
       user: {
-        ...viewerUser,
+        ...memberUser,
         roles: ['admin'],
         permissions: [
           { object: '/api/v1/wallet', action: '^GET$' },
@@ -148,11 +203,11 @@ describe('AuthBff', () => {
     const session = await bff.login({ username: 'admin', password: 'secret' }, false)
 
     expect(session.viewer.isAdmin).toBe(true)
+    expect(session.viewer.certification).toBeNull()
     expect(session.viewer.capabilities).toEqual({
       publishOrder: false,
-      claimOrder: false,
+      applyOrder: false,
       submitOrderLog: false,
-      completeOrder: false,
       viewWallet: true,
       redeemCode: true,
       manageAdmin: true,
@@ -186,14 +241,14 @@ describe('AuthBff', () => {
       email: null,
       initials: 'LU',
       status: 'active',
+      certification: null,
       roles: [],
       permissionGroups: [],
       permissionCount: 0,
       capabilities: {
         publishOrder: false,
-        claimOrder: false,
+        applyOrder: false,
         submitOrderLog: false,
-        completeOrder: false,
         viewWallet: false,
         redeemCode: false,
         manageAdmin: false,
@@ -204,7 +259,7 @@ describe('AuthBff', () => {
   it('exposes the current access token to other frontend BFFs only', async () => {
     expect(bff.accessToken()).toBeNull()
 
-    await bff.login({ username: 'viewer', password: 'secret' }, false)
+    await bff.login({ username: 'member', password: 'secret' }, false)
 
     expect(bff.accessToken()).toBe('access-1')
 
@@ -230,7 +285,7 @@ describe('AuthBff', () => {
     }
     vi.mocked(gateway.me)
       .mockRejectedValueOnce(new ApiError(401, 'expired'))
-      .mockResolvedValueOnce(viewerUser)
+      .mockResolvedValueOnce(memberUser)
 
     const session = await bff.restore()
 
@@ -238,7 +293,7 @@ describe('AuthBff', () => {
     expect(gateway.refresh).toHaveBeenCalledWith('refresh-1')
     expect(gateway.me).toHaveBeenNthCalledWith(1, 'expired')
     expect(gateway.me).toHaveBeenNthCalledWith(2, 'access-2')
-    expect(session?.viewer.username).toBe('viewer')
+    expect(session?.viewer.username).toBe('member')
     expect(session?.remember).toBe(false)
     expect(tokenStore.value).toEqual({
       tokens: { accessToken: 'access-2', refreshToken: 'refresh-2' },
@@ -278,8 +333,8 @@ describe('AuthBff', () => {
       access_token: 'access-1',
       refresh_token: 'refresh-1',
       user: {
-        ...viewerUser,
-        roles: ['operator'],
+        ...memberUser,
+        roles: ['member'],
         permissions: [
           { object: '/api/v1/fde/orders', action: '^(POST|PATCH)$' },
           { object: '/api/v1/fde/orders/*', action: '^(PATCH|PUT)$' },
@@ -287,7 +342,7 @@ describe('AuthBff', () => {
       },
     })
 
-    const session = await bff.login({ username: 'operator', password: 'secret' }, false)
+    const session = await bff.login({ username: 'member', password: 'secret' }, false)
     const orders = session.viewer.permissionGroups.find((group) => group.key === 'fde')
 
     expect(orders?.actions).toEqual([

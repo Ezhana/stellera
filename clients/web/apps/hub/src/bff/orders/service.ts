@@ -1,6 +1,10 @@
 import type {
+  ApplicationListFilter,
+  ApplicationListModel,
+  ApplicationType,
   FdeOrderDetailView,
   FdeOrderView,
+  OrderApplicationView,
   OrderListFilter,
   OrderListModel,
   WorkLogView,
@@ -10,7 +14,14 @@ import { BffError, toBffError } from '../errors'
 import type { TokenProvider } from '../token-provider'
 import type { OrderListDto } from './dto'
 import type { OrderGateway } from './gateway'
-import { summarizeOrders, toOrderDetailView, toOrderView, toWorkLogView } from './mapper'
+import {
+  summarizeOrders,
+  toApplicationListModel,
+  toApplicationView,
+  toOrderDetailView,
+  toOrderView,
+  toWorkLogView,
+} from './mapper'
 import type {
   OrderRealtimeConnection,
   OrderRealtimeGateway,
@@ -55,6 +66,15 @@ export class OrdersBff {
     }
   }
 
+  async listAssignedOrders(filter?: OrderListFilter): Promise<OrderListModel> {
+    const token = this.requireToken()
+    try {
+      return this.toListModel(await this.gateway.listAssignedOrders(token, filter))
+    } catch (error) {
+      throw toBffError(error, 'orders')
+    }
+  }
+
   async getOrder(id: string): Promise<FdeOrderDetailView> {
     const token = this.requireToken()
     try {
@@ -73,10 +93,10 @@ export class OrdersBff {
     }
   }
 
-  async claimOrder(id: string): Promise<FdeOrderView> {
+  async cancelOrder(id: string): Promise<FdeOrderView> {
     const token = this.requireToken()
     try {
-      return toOrderView(await this.gateway.claimOrder(token, id))
+      return toOrderView(await this.gateway.cancelOrder(token, id))
     } catch (error) {
       throw toBffError(error, 'orders')
     }
@@ -91,10 +111,62 @@ export class OrdersBff {
     }
   }
 
-  async completeOrder(id: string): Promise<FdeOrderView> {
+  async applyForOrder(
+    orderId: string,
+    type: ApplicationType,
+    message?: string | null,
+  ): Promise<OrderApplicationView> {
     const token = this.requireToken()
     try {
-      return toOrderView(await this.gateway.completeOrder(token, id))
+      const normalized = message?.trim() ? message.trim() : null
+      return toApplicationView(
+        await this.gateway.applyForOrder(token, orderId, { type, message: normalized }),
+      )
+    } catch (error) {
+      throw toBffError(error, 'orders')
+    }
+  }
+
+  async listMyApplications(filter?: ApplicationListFilter): Promise<ApplicationListModel> {
+    const token = this.requireToken()
+    try {
+      return toApplicationListModel(await this.gateway.listMyApplications(token, filter))
+    } catch (error) {
+      throw toBffError(error, 'orders')
+    }
+  }
+
+  async listReceivedApplications(filter?: ApplicationListFilter): Promise<ApplicationListModel> {
+    const token = this.requireToken()
+    try {
+      return toApplicationListModel(await this.gateway.listReceivedApplications(token, filter))
+    } catch (error) {
+      throw toBffError(error, 'orders')
+    }
+  }
+
+  async approveApplication(id: string, note?: string | null): Promise<OrderApplicationView> {
+    const token = this.requireToken()
+    try {
+      return toApplicationView(await this.gateway.approveApplication(token, id, note))
+    } catch (error) {
+      throw toBffError(error, 'orders')
+    }
+  }
+
+  async rejectApplication(id: string, note?: string | null): Promise<OrderApplicationView> {
+    const token = this.requireToken()
+    try {
+      return toApplicationView(await this.gateway.rejectApplication(token, id, note))
+    } catch (error) {
+      throw toBffError(error, 'orders')
+    }
+  }
+
+  async withdrawApplication(id: string): Promise<OrderApplicationView> {
+    const token = this.requireToken()
+    try {
+      return toApplicationView(await this.gateway.withdrawApplication(token, id))
     } catch (error) {
       throw toBffError(error, 'orders')
     }

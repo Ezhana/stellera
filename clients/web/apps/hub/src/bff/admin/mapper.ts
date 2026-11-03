@@ -13,6 +13,7 @@ import type {
 import { formatCents, formatDateTimeLabel } from '@/lib/money'
 
 import { deriveInitials, describeRole } from '../auth/mapper'
+import { certificationFromRoles, normalizeCertification } from '../certification'
 import type {
   AdminRedeemCodeDto,
   AdminRedeemCodeListDto,
@@ -84,16 +85,21 @@ function normalizeOptional(value: string | null | undefined): string | null {
 
 export function toAdminUserView(dto: AdminUserDto): AdminUserView {
   const username = dto.username
-  const displayName = normalizeOptional(dto.full_name) ?? username
+  const fullName = normalizeOptional(dto.full_name)
+  const displayName = fullName ?? username
   const roleKeys = [...new Set(dto.roles)]
   const isActive = dto.is_active !== false
+  const certification =
+    normalizeCertification(dto.certification) ?? certificationFromRoles(roleKeys)
 
   return {
     id: String(dto.id),
     username,
     displayName,
+    fullName,
     initials: deriveInitials(displayName),
     email: normalizeOptional(dto.email),
+    certification,
     isActive,
     statusLabel: isActive ? '已启用' : '已停用',
     roleKeys,

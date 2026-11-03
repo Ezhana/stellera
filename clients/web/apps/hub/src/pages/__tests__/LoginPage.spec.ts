@@ -28,14 +28,14 @@ const viewer: ViewerProfile = {
   status: 'active',
   statusLabel: '已启用',
   isAdmin: true,
+  certification: null,
   roles: [{ key: 'admin', label: '管理员', tone: 'accent' }],
   permissionGroups: [],
   permissionCount: 0,
   capabilities: {
     publishOrder: true,
-    claimOrder: true,
+    applyOrder: true,
     submitOrderLog: true,
-    completeOrder: true,
     viewWallet: true,
     redeemCode: true,
     manageAdmin: true,
@@ -60,6 +60,7 @@ async function mountLogin(query: Record<string, string> = {}): Promise<MountResu
     history: createMemoryHistory(),
     routes: [
       { path: '/login', name: 'login', component: EmptyView },
+      { path: '/register', name: 'register', component: EmptyView },
       { path: '/intro', name: 'intro', component: EmptyView },
       { path: '/fde/hall', name: 'fde-hall', component: EmptyView },
     ],
@@ -150,11 +151,27 @@ describe('LoginPage', () => {
     expect(router.currentRoute.value.fullPath).toBe('/intro')
   })
 
+  it('links to the public registration page', async () => {
+    const { wrapper } = await mountLogin()
+
+    const link = wrapper.findAll('a').find((node) => node.text() === '注册')
+    expect(link?.attributes('href')).toBe('/register')
+  })
+
   it('lists every demo account with its plaintext password', async () => {
     const { wrapper } = await mountLogin()
 
     expect(wrapper.text()).toContain('测试环境演示账号')
     expect(wrapper.text()).toContain('点击填入')
+    expect(DEMO_ACCOUNTS.map((account) => account.username)).toEqual([
+      'admin',
+      'member',
+      'enterprise',
+      'engineer',
+    ])
+    expect(DEMO_ACCOUNTS.find((account) => account.username === 'member')?.password).toBe(
+      'member12345',
+    )
     expect(wrapper.findAll('[data-demo-account]')).toHaveLength(DEMO_ACCOUNTS.length)
 
     for (const account of DEMO_ACCOUNTS) {

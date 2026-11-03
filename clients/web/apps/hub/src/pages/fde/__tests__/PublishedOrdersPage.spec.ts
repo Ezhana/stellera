@@ -6,8 +6,13 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { BffError } from '@/bff/errors'
 import { ordersBff } from '@/bff/orders'
 import type { OrderRealtimeHandlers } from '@/bff/orders'
-import { buildOrderView, buildViewer } from '@/bff/orders/__tests__/fixtures'
-import type { FdeOrderView, OrderListModel, ViewerProfile } from '@/models'
+import {
+  buildApplicationListModel,
+  buildApplicationView,
+  buildOrderView,
+  buildViewer,
+} from '@/bff/orders/__tests__/fixtures'
+import type { FdeOrderView, OrderListModel } from '@/models'
 import PublishedOrdersPage from '@/pages/fde/PublishedOrdersPage.vue'
 import { useAuthStore } from '@/stores/auth'
 
@@ -18,11 +23,17 @@ vi.mock('@/bff/orders', async (importOriginal) => {
     ordersBff: {
       listOrders: vi.fn(),
       listMyOrders: vi.fn(),
+      listAssignedOrders: vi.fn(),
       getOrder: vi.fn(),
       createOrder: vi.fn(),
-      claimOrder: vi.fn(),
+      cancelOrder: vi.fn(),
       addWorkLog: vi.fn(),
-      completeOrder: vi.fn(),
+      applyForOrder: vi.fn(),
+      listMyApplications: vi.fn(),
+      listReceivedApplications: vi.fn(),
+      approveApplication: vi.fn(),
+      rejectApplication: vi.fn(),
+      withdrawApplication: vi.fn(),
       connectRealtime: vi.fn(),
     },
   }
@@ -39,6 +50,20 @@ const myOrder = buildOrderView({
   publisherId: '7',
   publisherName: 'Luna',
   createdAt: '2026-11-01T00:00:00.000Z',
+})
+
+const inProgressOrder = buildOrderView({
+  id: '2',
+  title: '金融风控模型交付',
+  status: 'in_progress',
+  statusLabel: '交付中',
+  statusTone: 'info',
+  publisherId: '7',
+  publisherName: 'Luna',
+  engineerId: '9',
+  engineerName: '工程师阿远',
+  engineerCertification: 'engineer',
+  createdAt: '2026-10-30T00:00:00.000Z',
 })
 
 function listModel(orders: FdeOrderView[]): OrderListModel {
@@ -62,12 +87,16 @@ interface MountResult {
   router: Router
 }
 
-async function mountPage(viewer: ViewerProfile = buildViewer()): Promise<MountResult> {
+async function mountPage(): Promise<MountResult> {
   const pinia = createPinia()
   setActivePinia(pinia)
   const auth = useAuthStore()
   auth.$patch({
-    session: { viewer, remember: false, authenticatedAt: '2026-11-01T00:00:00.000Z' },
+    session: {
+      viewer: buildViewer(),
+      remember: false,
+      authenticatedAt: '2026-11-01T00:00:00.000Z',
+    },
     status: 'authenticated',
   })
 
@@ -78,6 +107,8 @@ async function mountPage(viewer: ViewerProfile = buildViewer()): Promise<MountRe
       { path: '/intro', name: 'intro', component: EmptyView },
       { path: '/fde/hall', name: 'fde-hall', component: EmptyView },
       { path: '/fde/published', name: 'fde-published', component: EmptyView },
+      { path: '/fde/assigned', name: 'fde-assigned', component: EmptyView },
+      { path: '/fde/applications', name: 'fde-applications', component: EmptyView },
       { path: '/wallet', name: 'wallet', component: EmptyView },
     ],
   })
@@ -112,6 +143,10 @@ async function fillForm(
   await wrapper.find('textarea').setValue(values.description)
 }
 
+function findButton(wrapper: VueWrapper, label: string) {
+  return wrapper.findAll('button').find((button) => button.text() === label)
+}
+
 describe('PublishedOrdersPage', () => {
   let handlers: OrderRealtimeHandlers | null
   let closeSpy: Mock<() => void>
@@ -124,16 +159,22 @@ describe('PublishedOrdersPage', () => {
       nextHandlers.onStateChange('live')
       return { close: closeSpy }
     })
+    vi.mocked(ordersBff.listReceivedApplications).mockResolvedValue(buildApplicationListModel([]))
   })
 
-  it('lists my orders and opens the inline publish form for permitted users', async () => {
+  it('lists my orders and opens the inline publish form for every signed-in user', async () => {
     vi.mocked(ordersBff.listMyOrders).mockResolvedValue(listModel([myOrder]))
     const { wrapper } = await mountPage()
 
     expect(ordersBff.listMyOrders).toHaveBeenCalledTimes(1)
+    expect(ordersBff.listReceivedApplications).toHaveBeenCalledWith({
+      status: 'pending',
+      pageSize: 100,
+    })
     expect(wrapper.findAll('tbody tr')).toHaveLength(1)
     expect(wrapper.text()).toContain('医疗影像数据标注与质检')
     expect(wrapper.text()).toContain('我的订单')
+    expect(wrapper.text()).not.toContain('无发布权限')
 
     await openForm(wrapper)
 
@@ -208,26 +249,97 @@ describe('PublishedOrdersPage', () => {
     expect(wrapper.find('form').exists()).toBe(false)
   })
 
-  it('shows an info alert and hides the form when publishing is not permitted', async () => {
+  it('links the pending accept applications of an open order to the review tab', async () => {
     vi.mocked(ordersBff.listMyOrders).mockResolvedValue(listModel([myOrder]))
-    const { wrapper } = await mountPage(
-      buildViewer({
-        capabilities: {
-          publishOrder: false,
-          claimOrder: false,
-          submitOrderLog: false,
-          completeOrder: false,
-          viewWallet: false,
-          redeemCode: false,
-          manageAdmin: false,
-        },
+    vi.mocked(ordersBff.listReceivedApplications).mockResolvedValue(
+      buildApplicationListModel([
+        buildApplicationView({ id: '11', type: 'accept', order: myOrder }),
+        buildApplicationView({ id: '12', type: 'accept', order: myOrder }),
+      ]),
+    )
+
+    const { wrapper } = await mountPage()
+
+    const link = wrapper.findAll('a').find((node) => node.text() === '2 条接单申请')
+    expect(link?.attributes('href')).toBe('/fde/applications?tab=received')
+  })
+
+  it('cancels an open order only after the second confirmation click', async () => {
+    vi.mocked(ordersBff.listMyOrders).mockResolvedValue(listModel([myOrder]))
+    vi.mocked(ordersBff.cancelOrder).mockResolvedValue(
+      buildOrderView({
+        ...myOrder,
+        status: 'cancelled',
+        statusLabel: '已取消',
+        statusTone: 'default',
       }),
     )
 
-    expect(wrapper.text()).toContain('无发布权限')
-    expect(wrapper.find('form').exists()).toBe(false)
-    const toggle = wrapper.findAll('button').find((button) => button.text() === '发布需求')
-    expect(toggle).toBeUndefined()
+    const { wrapper } = await mountPage()
+
+    await findButton(wrapper, '取消订单')?.trigger('click')
+    await flushPromises()
+    expect(ordersBff.cancelOrder).not.toHaveBeenCalled()
+    expect(findButton(wrapper, '确认取消')).toBeDefined()
+
+    await findButton(wrapper, '确认取消')?.trigger('click')
+    await flushPromises()
+
+    expect(ordersBff.cancelOrder).toHaveBeenCalledWith('1')
+    expect(wrapper.text()).toContain('订单已取消，托管资金已退回。')
+    expect(wrapper.text()).toContain('已取消')
+  })
+
+  it('shows the cancel error message when the order is no longer cancellable', async () => {
+    vi.mocked(ordersBff.listMyOrders).mockResolvedValue(listModel([myOrder]))
+    vi.mocked(ordersBff.cancelOrder).mockRejectedValue(
+      new BffError('conflict', '订单已被接单，无法取消。'),
+    )
+
+    const { wrapper } = await mountPage()
+
+    await findButton(wrapper, '取消订单')?.trigger('click')
+    await flushPromises()
+    await findButton(wrapper, '确认取消')?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('订单已被接单，无法取消。')
+  })
+
+  it('confirms delivery when the engineer has a pending delivery application', async () => {
+    vi.mocked(ordersBff.listMyOrders).mockResolvedValue(listModel([inProgressOrder]))
+    vi.mocked(ordersBff.listReceivedApplications).mockResolvedValue(
+      buildApplicationListModel([
+        buildApplicationView({
+          id: '21',
+          type: 'delivery',
+          status: 'pending',
+          order: inProgressOrder,
+          applicantName: '工程师阿远',
+          applicantCertification: 'engineer',
+        }),
+      ]),
+    )
+    vi.mocked(ordersBff.approveApplication).mockResolvedValue(
+      buildApplicationView({ id: '21', type: 'delivery', status: 'approved' }),
+    )
+
+    const { wrapper } = await mountPage()
+
+    await findButton(wrapper, '确认交付')?.trigger('click')
+    await flushPromises()
+
+    expect(ordersBff.approveApplication).toHaveBeenCalledWith('21')
+    expect(wrapper.text()).toContain('已确认交付，托管资金已结算给工程师。')
+    expect(ordersBff.listMyOrders).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows 等待交付申请 while an in-progress order has no pending delivery application', async () => {
+    vi.mocked(ordersBff.listMyOrders).mockResolvedValue(listModel([inProgressOrder]))
+    const { wrapper } = await mountPage()
+
+    expect(wrapper.text()).toContain('等待交付申请')
+    expect(findButton(wrapper, '确认交付')).toBeUndefined()
   })
 
   it('only applies realtime events for tracked or self-published orders', async () => {

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
@@ -52,6 +52,16 @@ SEED_DATA_DIR = Path(__file__).resolve().parent / "seed_data"
 DEMO_INITIAL_RECHARGE_DAYS = 120
 DEMO_REDEEM_DAYS = 70
 DEMO_REDEEM_BATCH_NO = "RDM-DEMO-2026"
+
+# 已退役的角色：seed 每次都会把持有者迁移成 member 后删除角色行。
+RETIRED_ROLE_NAMES: tuple[str, ...] = ("viewer", "operator")
+MEMBER_ROLE = "member"
+
+# 旧演示账号：仅用户名与邮箱同时精确匹配时才清理。
+LEGACY_DEMO_USERS: tuple[tuple[str, str], ...] = (
+    ("operator", "operator@example.com"),
+    ("viewer", "viewer@example.com"),
+)
 
 
 class SeedSettings(BaseSettings):
@@ -154,6 +164,8 @@ class SeedResult:
     created_wallet_transactions: int
     created_redeem_codes: int
     created_settings: int
+    retired_roles: tuple[str, ...] = ()
+    removed_users: tuple[str, ...] = ()
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
@@ -254,12 +266,14 @@ async def _seed_roles(
 ) -> dict[str, Role]:
     existing = {role.name: role for role in (await session.execute(select(Role))).scalars()}
     for definition in definitions:
-        if definition.name in existing:
-            continue
-        role = Role(name=definition.name, description=definition.description)
-        session.add(role)
-        existing[definition.name] = role
-        created.append(definition.name)
+        role = existing.get(definition.name)
+        if role is None:
+            role = Role(name=definition.name)
+            session.add(role)
+            existing[definition.name] = role
+            created.append(definition.name)
+        # 已存在的角色也同步描述，保证 TOML 是唯一事实来源。
+        role.description = definition.description
     await session.flush()
 
     # 角色树需要拿到自增 id 之后再回填 parent_id。
@@ -275,6 +289,7 @@ async def _seed_permissions(
     definitions: tuple[PermissionDefinition, ...],
     roles: dict[str, Role],
 ) -> int:
+    """按 TOML 收敛权限与角色-权限关系：新增缺失行，同时清理已下线的旧策略。"""
     existing_permissions = {
         (permission.object, permission.action): permission
         for permission in (await session.execute(select(Permission))).scalars()
@@ -283,6 +298,7 @@ async def _seed_permissions(
         (link.role_id, link.permission_id)
         for link in (await session.execute(select(RolePermission))).scalars()
     }
+    wanted_links: set[tuple[int, int]] = set()
     created = 0
     for definition in definitions:
         role = roles[definition.role]
@@ -297,10 +313,129 @@ async def _seed_permissions(
             await session.flush()
             existing_permissions[(definition.object, definition.action)] = permission
             created += 1
-        if (role.id, permission.id) not in existing_links:
-            session.add(RolePermission(role_id=role.id, permission_id=permission.id))
-            existing_links.add((role.id, permission.id))
+        wanted_links.add((role.id, permission.id))
+
+    stale_links = existing_links - wanted_links
+    for role_id, permission_id in stale_links:
+        await session.execute(
+            delete(RolePermission).where(
+                RolePermission.role_id == role_id,
+                RolePermission.permission_id == permission_id,
+            )
+        )
+    used_permission_ids = {permission_id for _, permission_id in wanted_links}
+    orphan_permission_ids = [
+        permission.id
+        for permission in existing_permissions.values()
+        if permission.id not in used_permission_ids
+    ]
+    if orphan_permission_ids:
+        await session.execute(delete(Permission).where(Permission.id.in_(orphan_permission_ids)))
+
+    for role_id, permission_id in wanted_links - existing_links:
+        session.add(RolePermission(role_id=role_id, permission_id=permission_id))
+    await session.flush()
     return created
+
+
+async def _retire_roles(
+    session: AsyncSession,
+    roles: dict[str, Role],
+) -> tuple[str, ...]:
+    """退役历史角色：持有者补 member 角色后删除 user_roles / role_permissions / role 行。"""
+    retired = (
+        (await session.execute(select(Role).where(Role.name.in_(RETIRED_ROLE_NAMES))))
+        .scalars()
+        .all()
+    )
+    if not retired:
+        return ()
+    member_role = roles[MEMBER_ROLE]
+    retired_ids = [role.id for role in retired]
+    holder_ids = list(
+        (
+            await session.execute(select(UserRole.user_id).where(UserRole.role_id.in_(retired_ids)))
+        ).scalars()
+    )
+    existing_member_ids = set(
+        (
+            await session.execute(
+                select(UserRole.user_id).where(
+                    UserRole.user_id.in_(holder_ids),
+                    UserRole.role_id == member_role.id,
+                )
+            )
+        ).scalars()
+    )
+    for user_id in holder_ids:
+        if user_id not in existing_member_ids:
+            session.add(UserRole(user_id=user_id, role_id=member_role.id))
+    await session.execute(delete(UserRole).where(UserRole.role_id.in_(retired_ids)))
+    await session.execute(delete(RolePermission).where(RolePermission.role_id.in_(retired_ids)))
+    await session.execute(delete(Role).where(Role.id.in_(retired_ids)))
+    await session.flush()
+    return tuple(role.name for role in retired)
+
+
+async def _migrate_legacy_demo_users(
+    session: AsyncSession,
+    *,
+    member_user: User,
+    member_role: Role,
+) -> tuple[str, ...]:
+    """清理旧演示账号：兑换码使用人转给 member；被订单引用的账号转为 member 保留。"""
+    removed: list[str] = []
+    for username, email in LEGACY_DEMO_USERS:
+        user = (
+            await session.execute(
+                select(User).where(User.username == username, User.email == email)
+            )
+        ).scalar_one_or_none()
+        if user is None:
+            continue
+        # 删除前把兑换码使用人改到 member，避免悬空引用或唯一约束失败。
+        await session.execute(
+            update(RedeemCode)
+            .where(RedeemCode.used_by_id == user.id)
+            .values(used_by_id=member_user.id)
+        )
+        referenced = (
+            await session.execute(
+                select(FdeOrder.id)
+                .where(
+                    or_(
+                        FdeOrder.publisher_id == user.id,
+                        FdeOrder.engineer_id == user.id,
+                    )
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if referenced is None:
+            # 工作日志作者同样有外键约束，被引用时也要保留账号。
+            referenced = (
+                await session.execute(
+                    select(FdeOrderLog.author_id).where(FdeOrderLog.author_id == user.id).limit(1)
+                )
+            ).scalar_one_or_none()
+        if referenced is not None:
+            # 被订单 / 工作日志引用时不能删除：转为 member 账号保留（历史数据仍可展示）。
+            existing = (
+                await session.execute(
+                    select(UserRole).where(
+                        UserRole.user_id == user.id,
+                        UserRole.role_id == member_role.id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                session.add(UserRole(user_id=user.id, role_id=member_role.id))
+            continue
+        # refresh_tokens / user_roles / wallets 由数据库外键 CASCADE 清理。
+        await session.delete(user)
+        removed.append(username)
+    await session.flush()
+    return tuple(removed)
 
 
 async def _ensure_user(
@@ -620,6 +755,8 @@ async def seed_database(
     async with session_factory() as session:
         roles = await _seed_roles(session, role_definitions, created_roles)
         created_permissions = await _seed_permissions(session, permission_definitions, roles)
+        # 退役 viewer / operator：先把持有者迁到 member，再删角色与关联行。
+        retired_roles = await _retire_roles(session, roles)
 
         admin_user = await _ensure_user(
             session,
@@ -635,6 +772,7 @@ async def seed_database(
         created_wallets = 0
         created_wallet_transactions = 0
         created_redeem_codes = 0
+        removed_users: tuple[str, ...] = ()
         if demo_user_definitions:
             demo_users = {
                 definition.username: await _ensure_user(
@@ -648,6 +786,12 @@ async def seed_database(
                 )
                 for definition in demo_user_definitions
             }
+            # 旧演示账号（operator / viewer）在 member 账号就绪后清理。
+            removed_users = await _migrate_legacy_demo_users(
+                session,
+                member_user=demo_users[MEMBER_ROLE],
+                member_role=roles[MEMBER_ROLE],
+            )
             # 演示订单必须在演示用户（发布方/工程师）存在之后写入。
             created_orders = await _seed_demo_orders(
                 session,
@@ -682,6 +826,8 @@ async def seed_database(
         created_wallet_transactions=created_wallet_transactions,
         created_redeem_codes=created_redeem_codes,
         created_settings=created_settings,
+        retired_roles=retired_roles,
+        removed_users=removed_users,
     )
 
 
@@ -706,7 +852,9 @@ def run_seed(*, demo: bool = False) -> None:
         f"wallets+{result.created_wallets}, "
         f"wallet_transactions+{result.created_wallet_transactions}, "
         f"redeem_codes+{result.created_redeem_codes}, "
-        f"settings+{result.created_settings}"
+        f"settings+{result.created_settings}, "
+        f"retired_roles={list(result.retired_roles)}, "
+        f"removed_users={list(result.removed_users)}"
     )
 
 

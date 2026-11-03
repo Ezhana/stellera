@@ -22,14 +22,18 @@ export type {
   OrderRealtimeHandlers,
   OrderRealtimeState,
 } from './realtime'
-export type { CreateOrderInput, CreateWorkLogInput } from './types'
+export type { CreateApplicationInput, CreateOrderInput, CreateWorkLogInput } from './types'
 export {
+  formatApplicationStatus,
+  formatApplicationType,
   formatDateTimeLabel,
   formatDeliveryLabel,
   formatEscrow,
   formatPriceCents,
   formatStatus,
   summarizeOrders,
+  toApplicationListModel,
+  toApplicationView,
   toOrderDetailView,
   toOrderView,
   toWorkLogView,

@@ -29,6 +29,7 @@ const TYPE_META: ReadonlyMap<string, Omit<TransactionTypePresentation, 'type'>> 
   ['order_payment', { label: '消费', tone: 'warning', direction: 'debit' }],
   ['order_refund', { label: '退款', tone: 'info', direction: 'credit' }],
   ['order_settlement', { label: '结算收入', tone: 'success', direction: 'credit' }],
+  ['adjustment', { label: '余额调整', tone: 'info', direction: 'credit' }],
 ])
 
 /** Known type labels/tones/signs; unknown values degrade to the raw key + default tone. */

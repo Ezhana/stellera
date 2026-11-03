@@ -20,6 +20,7 @@ function createGateway(): AdminGateway {
     listUsers: vi.fn(async () => buildAdminUserListDto()),
     listRoles: vi.fn(async () => buildAdminRoleListDto()),
     updateUser: vi.fn(async () => buildAdminUserDto()),
+    walletAdjustment: vi.fn(async () => buildAdminUserDto({ balance_cents: 1_050_000 })),
     listRedeemCodes: vi.fn(async () => buildRedeemCodeListDto()),
     createRedeemCodes: vi.fn(async () => buildCreateRedeemCodeResponseDto()),
     updateRedeemCode: vi.fn(async () => buildRedeemCodeDto({ status: 'disabled' })),
@@ -59,14 +60,35 @@ describe('AdminBff', () => {
     expect(roles).toEqual([{ key: 'admin', label: '管理员', tone: 'accent' }])
   })
 
-  it('updates a user status and roles', async () => {
+  it('updates a user profile, status and certification', async () => {
     await bff.updateUser('7', { isActive: false })
-    await bff.updateUser('7', { roles: ['admin', 'operator'] })
+    await bff.updateUser('7', {
+      fullName: 'Luna Chen',
+      email: 'luna@example.com',
+      certification: 'engineer',
+    })
 
     expect(gateway.updateUser).toHaveBeenNthCalledWith(1, 'token-1', '7', { isActive: false })
     expect(gateway.updateUser).toHaveBeenNthCalledWith(2, 'token-1', '7', {
-      roles: ['admin', 'operator'],
+      fullName: 'Luna Chen',
+      email: 'luna@example.com',
+      certification: 'engineer',
     })
+  })
+
+  it('adjusts a user balance and maps the refreshed view', async () => {
+    const user = await bff.walletAdjustment('7', {
+      direction: 'debit',
+      amountCents: 20_000,
+      note: '扣减测试',
+    })
+
+    expect(gateway.walletAdjustment).toHaveBeenCalledWith('token-1', '7', {
+      direction: 'debit',
+      amountCents: 20_000,
+      note: '扣减测试',
+    })
+    expect(user.balanceLabel).toBe('¥10,500')
   })
 
   it('lists redeem codes with the filter', async () => {
@@ -132,8 +154,12 @@ describe('AdminBff', () => {
       code: 'session-expired',
     })
     await expect(bff.getSettings()).rejects.toMatchObject({ code: 'session-expired' })
+    await expect(
+      bff.walletAdjustment('7', { direction: 'credit', amountCents: 100, note: 'x' }),
+    ).rejects.toMatchObject({ code: 'session-expired' })
     expect(gateway.listUsers).not.toHaveBeenCalled()
     expect(gateway.getSettings).not.toHaveBeenCalled()
+    expect(gateway.walletAdjustment).not.toHaveBeenCalled()
   })
 
   it('normalizes forbidden and conflict transport errors', async () => {

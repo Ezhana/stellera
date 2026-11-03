@@ -30,6 +30,13 @@ describe('router guards', () => {
     expect(authState.bootstrap).toHaveBeenCalled()
   })
 
+  it('lets an authenticated viewer open the new FDE order pages', async () => {
+    expect(await go('/fde/hall')).toMatchObject({ name: 'fde-hall' })
+    expect(await go('/fde/published')).toMatchObject({ name: 'fde-published' })
+    expect(await go('/fde/assigned')).toMatchObject({ name: 'fde-assigned' })
+    expect(await go('/fde/applications')).toMatchObject({ name: 'fde-applications' })
+  })
+
   it('redirects non-admins away from admin routes to the intro page', async () => {
     expect(await go('/admin/users')).toMatchObject({ name: 'intro' })
     expect(await go('/admin/redeem-codes')).toMatchObject({ name: 'intro' })
@@ -51,6 +58,26 @@ describe('router guards', () => {
     const route = await go('/wallet')
     expect(route.name).toBe('login')
     expect(route.fullPath).toContain('redirect=/wallet')
+  })
+
+  it('sends anonymous viewers to the login page from assigned orders too', async () => {
+    authState.isAuthenticated = false
+    authState.viewer = null
+
+    const route = await go('/fde/assigned')
+    expect(route.name).toBe('login')
+    expect(route.fullPath).toContain('redirect=/fde/assigned')
+  })
+
+  it('sends authenticated viewers away from the register page', async () => {
+    expect(await go('/register')).toMatchObject({ name: 'intro' })
+  })
+
+  it('opens the register page for anonymous viewers', async () => {
+    authState.isAuthenticated = false
+    authState.viewer = null
+
+    expect(await go('/register')).toMatchObject({ name: 'register' })
   })
 
   it('sends authenticated viewers away from the login page', async () => {

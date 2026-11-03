@@ -1,18 +1,29 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  formatApplicationStatus,
+  formatApplicationType,
   formatDateTimeLabel,
   formatDeliveryLabel,
   formatEscrow,
   formatPriceCents,
   formatStatus,
   summarizeOrders,
+  toApplicationListModel,
+  toApplicationView,
   toOrderDetailView,
   toOrderView,
   toWorkLogView,
   upsertOrder,
 } from '../mapper'
-import { buildOrderDetailDto, buildOrderDto, buildOrderView, buildWorkLogDto } from './fixtures'
+import {
+  buildApplicationDto,
+  buildApplicationListDto,
+  buildOrderDetailDto,
+  buildOrderDto,
+  buildOrderView,
+  buildWorkLogDto,
+} from './fixtures'
 
 describe('orders mapper formatting', () => {
   it('formats cents as grouped yuan with optional fen', () => {
@@ -60,7 +71,7 @@ describe('orders mapper DTO → page model', () => {
         code: 'FDE-42',
         status: 'in_progress',
         escrow_status: 'held',
-        engineer: { id: '9', display_name: '工程师阿远' },
+        engineer: { id: '9', display_name: '工程师阿远', certification: 'engineer' },
         work_log_count: 3,
         claimed_at: '2026-11-01T08:00:00.000Z',
       }),
@@ -83,8 +94,10 @@ describe('orders mapper DTO → page model', () => {
       escrowTone: 'accent',
       publisherId: '7',
       publisherName: 'Luna',
+      publisherCertification: 'enterprise',
       engineerId: '9',
       engineerName: '工程师阿远',
+      engineerCertification: 'engineer',
       workLogCount: 3,
       createdAt: '2026-11-01T06:20:00.000Z',
       claimedAtLabel: expect.any(String),
@@ -120,6 +133,88 @@ describe('orders mapper DTO → page model', () => {
 
     expect(log.workedHours).toBeNull()
     expect(log.authorName).toBe('工程师阿远')
+  })
+
+  it('degrades unknown certifications to null', () => {
+    const view = toOrderView(
+      buildOrderDto({
+        publisher: { id: 7, display_name: 'Luna', certification: 'vip' },
+        engineer: { id: 9, display_name: '工程师阿远', certification: null },
+      }),
+    )
+
+    expect(view.publisherCertification).toBeNull()
+    expect(view.engineerCertification).toBeNull()
+    expect(view.engineerName).toBe('工程师阿远')
+  })
+})
+
+describe('orders mapper applications', () => {
+  it('maps an application with its order, applicant and reviewer', () => {
+    const view = toApplicationView(
+      buildApplicationDto({
+        id: 5,
+        status: 'approved',
+        message: '有医疗行业交付经验',
+        review_note: '欢迎加入',
+        applicant: { id: 6, display_name: '会员（演示）', certification: null },
+        reviewer: { id: 7, display_name: 'Luna', certification: 'enterprise' },
+        reviewed_at: '2026-11-01T08:00:00.000Z',
+      }),
+    )
+
+    expect(view).toMatchObject({
+      id: '5',
+      type: 'accept',
+      typeLabel: '接单申请',
+      typeTone: 'info',
+      status: 'approved',
+      statusLabel: '已通过',
+      statusTone: 'success',
+      message: '有医疗行业交付经验',
+      reviewNote: '欢迎加入',
+      applicantName: '会员（演示）',
+      applicantCertification: null,
+      reviewerName: 'Luna',
+      reviewedAtLabel: expect.any(String),
+      createdAtLabel: expect.any(String),
+    })
+    expect(view.order.title).toBe('医疗影像数据标注与质检')
+  })
+
+  it('degrades unknown application type/status and keeps nullable fields', () => {
+    const view = toApplicationView(
+      buildApplicationDto({ type: 'mystery', status: 'archived', reviewer: null }),
+    )
+
+    expect(view.typeLabel).toBe('mystery')
+    expect(view.typeTone).toBe('default')
+    expect(view.statusLabel).toBe('archived')
+    expect(view.statusTone).toBe('default')
+    expect(view.reviewerName).toBeNull()
+    expect(view.reviewedAtLabel).toBeNull()
+  })
+
+  it('formats application presentation catalogues', () => {
+    expect(formatApplicationType('accept')).toEqual({ label: '接单申请', tone: 'info' })
+    expect(formatApplicationType('delivery')).toEqual({ label: '交付申请', tone: 'accent' })
+    expect(formatApplicationStatus('pending')).toEqual({ label: '待审批', tone: 'warning' })
+    expect(formatApplicationStatus('rejected')).toEqual({ label: '已驳回', tone: 'error' })
+    expect(formatApplicationStatus('withdrawn')).toEqual({ label: '已撤回', tone: 'default' })
+  })
+
+  it('maps an application list and falls back to the loaded length', () => {
+    const model = toApplicationListModel(
+      buildApplicationListDto(
+        [buildApplicationDto(), buildApplicationDto({ id: 2, type: 'delivery' })],
+        { total: 0 },
+      ),
+    )
+
+    expect(model.applications).toHaveLength(2)
+    expect(model.total).toBe(2)
+    expect(model.page).toBe(1)
+    expect(model.pageSize).toBe(20)
   })
 })
 

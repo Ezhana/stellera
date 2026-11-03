@@ -1,4 +1,4 @@
-import type { BadgeTone } from './identity'
+import type { BadgeTone, Certification } from './identity'
 
 /** FDE order lifecycle status (stable frontend union). */
 export type FdeOrderStatus = 'open' | 'in_progress' | 'completed' | 'cancelled'
@@ -65,8 +65,10 @@ export interface FdeOrderView {
   escrowTone: BadgeTone
   publisherId: string
   publisherName: string
+  publisherCertification: Certification
   engineerId: string | null
   engineerName: string | null
+  engineerCertification: Certification
   workLogCount: number
   createdAt: string
   publishedAtLabel: string
@@ -107,3 +109,72 @@ export interface OrderListModel {
 
 export type OrderHallPageModel = OrderListModel
 export type PublishedOrdersPageModel = OrderListModel
+export type AssignedOrdersPageModel = OrderListModel
+
+/** A publisher-side or engineer-side request attached to an order. */
+export type ApplicationType = 'accept' | 'delivery'
+
+/** Application lifecycle status (stable frontend union). */
+export type ApplicationStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn'
+
+/** Frontend-owned presentation metadata for an application type. */
+export interface ApplicationTypeMeta {
+  key: ApplicationType
+  label: string
+  tone: BadgeTone
+}
+
+export const APPLICATION_TYPES: readonly ApplicationTypeMeta[] = [
+  { key: 'accept', label: '接单申请', tone: 'info' },
+  { key: 'delivery', label: '交付申请', tone: 'accent' },
+]
+
+/** Frontend-owned presentation metadata for an application status. */
+export interface ApplicationStatusMeta {
+  key: ApplicationStatus
+  label: string
+  tone: BadgeTone
+}
+
+export const APPLICATION_STATUSES: readonly ApplicationStatusMeta[] = [
+  { key: 'pending', label: '待审批', tone: 'warning' },
+  { key: 'approved', label: '已通过', tone: 'success' },
+  { key: 'rejected', label: '已驳回', tone: 'error' },
+  { key: 'withdrawn', label: '已撤回', tone: 'default' },
+]
+
+/** Stable page model of one order application. */
+export interface OrderApplicationView {
+  id: string
+  order: FdeOrderView
+  type: ApplicationType
+  typeLabel: string
+  typeTone: BadgeTone
+  status: ApplicationStatus
+  statusLabel: string
+  statusTone: BadgeTone
+  message: string | null
+  reviewNote: string | null
+  applicantName: string
+  applicantCertification: Certification
+  reviewerName: string | null
+  reviewedAtLabel: string | null
+  createdAtLabel: string
+}
+
+/** Filter shared by the "my applications" and "received applications" lists. */
+export interface ApplicationListFilter {
+  type?: ApplicationType | 'all'
+  status?: ApplicationStatus | 'all'
+  page?: number
+  pageSize?: number
+}
+
+export interface ApplicationListModel {
+  applications: OrderApplicationView[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export type ApplicationsPageModel = ApplicationListModel

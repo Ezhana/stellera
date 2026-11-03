@@ -1,8 +1,9 @@
-"""FDE 订单端点：订单大厅、我发布的、发布 / 认领 / 工作日志 / 完成 / 取消 + 实时推送。
+"""FDE 订单端点：订单大厅、我发布的、我接到的、发布 / 取消 / 工作日志 /
+申请接单 / 申请交付 / 我的申请 / 收到的申请 / 审批 + 实时推送。
 
-路由声明顺序很重要：`/orders/mine` 必须放在 `/orders/{order_id}` 之前，
-否则会被路径参数当作订单 id 吞掉。HTTP 语义（状态码、响应模型）只在这里处理，
-业务规则集中在 app/services/fde.py。
+路由声明顺序很重要：`/orders/mine`、`/orders/assigned` 必须放在
+`/orders/{order_id}` 之前，否则会被路径参数当作订单 id 吞掉。HTTP 语义
+（状态码、响应模型）只在这里处理，业务规则集中在 app/services/fde.py。
 
 实时推送走 `WebSocket /api/v1/fde/ws?token=<access_token>`：浏览器 WebSocket
 无法设置 Authorization 头，因此令牌从 query 读取并用 app 的 TokenService 校验
@@ -30,7 +31,14 @@ from app.models.fde import FdeOrderLog
 from app.models.user import User
 from app.realtime.hub import RealtimeHub
 from app.schemas.fde import (
+    ApplicationReviewRequest,
+    ApplicationStatus,
+    ApplicationType,
+    Certification,
     EscrowStatus,
+    OrderApplicationCreateRequest,
+    OrderApplicationListResponse,
+    OrderApplicationResponse,
     OrderCreateRequest,
     OrderDetailResponse,
     OrderListResponse,
@@ -42,7 +50,9 @@ from app.schemas.fde import (
 )
 from app.security.tokens import TokenError
 from app.services import fde as fde_service
+from app.services.certification import certification_from_roles
 from app.services.fde import (
+    ApplicationRecord,
     FdeError,
     FdeForbiddenError,
     FdeNotFoundError,
@@ -60,7 +70,15 @@ WS_CLOSE_UNAVAILABLE = 1013
 
 
 def _user_ref(user: User) -> OrderUserRef:
-    return OrderUserRef(id=user.id, display_name=user.full_name or user.username)
+    """用户摘要：认证状态完全由角色派生（admin 不影响认证）。"""
+    return OrderUserRef(
+        id=user.id,
+        display_name=user.full_name or user.username,
+        certification=cast(
+            Certification | None,
+            certification_from_roles(role.name for role in user.roles),
+        ),
+    )
 
 
 def _order_response(aggregate: OrderAggregate) -> OrderResponse:
@@ -111,6 +129,40 @@ def _detail_response(detail: OrderDetail) -> OrderDetailResponse:
         **_order_response(aggregate).model_dump(),
         logs=[_log_response(log) for log in detail.logs],
     )
+
+
+def _application_response(record: ApplicationRecord) -> OrderApplicationResponse:
+    application = record.application
+    return OrderApplicationResponse(
+        id=application.id,
+        order=_order_response(
+            OrderAggregate(order=application.order, work_log_count=record.work_log_count)
+        ),
+        type=cast(ApplicationType, application.type),
+        status=cast(ApplicationStatus, application.status),
+        message=application.message,
+        review_note=application.review_note,
+        applicant=_user_ref(application.applicant),
+        reviewer=_user_ref(application.reviewer) if application.reviewer is not None else None,
+        reviewed_at=ensure_utc(application.reviewed_at) if application.reviewed_at else None,
+        created_at=ensure_utc(application.created_at),
+    )
+
+
+def _application_list_response(page: fde_service.ApplicationPage) -> OrderApplicationListResponse:
+    return OrderApplicationListResponse(
+        items=[_application_response(item) for item in page.items],
+        total=page.total,
+        page=page.page,
+        page_size=page.page_size,
+    )
+
+
+def _note(payload: ApplicationReviewRequest | None) -> str | None:
+    if payload is None or payload.note is None:
+        return None
+    note = payload.note.strip()
+    return note or None
 
 
 def _http_error(exc: FdeError) -> HTTPException:
@@ -175,6 +227,25 @@ async def list_my_orders(
     return _page_response(result)
 
 
+@router.get("/orders/assigned", response_model=OrderListResponse)
+async def list_assigned_orders(
+    principal: CurrentUserDep,
+    session: SessionDep,
+    status_filter: Annotated[OrderStatus | None, Query(alias="status")] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> OrderListResponse:
+    """我接到的：只返回当前用户接单的订单。"""
+    result = await fde_service.list_orders_by_engineer(
+        session,
+        engineer_id=principal.user_id,
+        status=status_filter,
+        page=page,
+        page_size=page_size,
+    )
+    return _page_response(result)
+
+
 @router.get("/orders/{order_id}", response_model=OrderDetailResponse)
 async def get_order(
     order_id: int,
@@ -200,7 +271,7 @@ async def create_order(
     principal: CurrentUserDep,
     session: SessionDep,
 ) -> OrderResponse:
-    """企业发布需求：发布者自动成为 publisher，初始 open + 托管 held。"""
+    """发布需求：发布者自动成为 publisher，初始 open + 托管 held。"""
     try:
         aggregate = await fde_service.create_order(
             session,
@@ -217,22 +288,29 @@ async def create_order(
     return _order_response(aggregate)
 
 
-@router.post("/orders/{order_id}/claim", response_model=OrderResponse)
-async def claim_order(
+@router.post(
+    "/orders/{order_id}/applications",
+    response_model=OrderApplicationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_application(
     order_id: int,
-    request: Request,
+    payload: OrderApplicationCreateRequest,
     principal: CurrentUserDep,
     session: SessionDep,
-) -> OrderResponse:
-    """工程师认领待认领订单：状态转为 in_progress。"""
+) -> OrderApplicationResponse:
+    """申请接单（accept）或申请交付（delivery）：只落 pending 申请，不直接改订单状态。"""
     try:
-        aggregate = await fde_service.claim_order(
-            session, order_id=order_id, actor_id=principal.user_id
+        record = await fde_service.create_application(
+            session,
+            order_id=order_id,
+            applicant_id=principal.user_id,
+            application_type=payload.type,
+            message=payload.message.strip() if payload.message else None,
         )
     except FdeError as exc:
         raise _http_error(exc) from exc
-    await _broadcast(request, "order.updated", aggregate)
-    return _order_response(aggregate)
+    return _application_response(record)
 
 
 @router.post(
@@ -262,24 +340,6 @@ async def add_work_log(
     return _log_response(result.log)
 
 
-@router.post("/orders/{order_id}/complete", response_model=OrderResponse)
-async def complete_order(
-    order_id: int,
-    request: Request,
-    principal: CurrentUserDep,
-    session: SessionDep,
-) -> OrderResponse:
-    """发布者确认交付：in_progress -> completed，托管资金 released。"""
-    try:
-        aggregate = await fde_service.complete_order(
-            session, order_id=order_id, actor_id=principal.user_id
-        )
-    except FdeError as exc:
-        raise _http_error(exc) from exc
-    await _broadcast(request, "order.updated", aggregate)
-    return _order_response(aggregate)
-
-
 @router.post("/orders/{order_id}/cancel", response_model=OrderResponse)
 async def cancel_order(
     order_id: int,
@@ -287,7 +347,7 @@ async def cancel_order(
     principal: CurrentUserDep,
     session: SessionDep,
 ) -> OrderResponse:
-    """发布者取消待认领订单：open -> cancelled，托管资金 refunded。"""
+    """发布者取消待接单订单：open -> cancelled，托管资金 refunded，pending 申请驳回。"""
     try:
         aggregate = await fde_service.cancel_order(
             session, order_id=order_id, actor_id=principal.user_id
@@ -296,6 +356,123 @@ async def cancel_order(
         raise _http_error(exc) from exc
     await _broadcast(request, "order.updated", aggregate)
     return _order_response(aggregate)
+
+
+@router.get("/applications/mine", response_model=OrderApplicationListResponse)
+async def list_my_applications(
+    principal: CurrentUserDep,
+    session: SessionDep,
+    type_filter: Annotated[ApplicationType | None, Query(alias="type")] = None,
+    status_filter: Annotated[ApplicationStatus | None, Query(alias="status")] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> OrderApplicationListResponse:
+    """我发起的申请：可按类型 / 状态过滤，最新在前。"""
+    result = await fde_service.list_my_applications(
+        session,
+        applicant_id=principal.user_id,
+        type=type_filter,
+        status=status_filter,
+        page=page,
+        page_size=page_size,
+    )
+    return _application_list_response(result)
+
+
+@router.get("/applications/received", response_model=OrderApplicationListResponse)
+async def list_received_applications(
+    principal: CurrentUserDep,
+    session: SessionDep,
+    type_filter: Annotated[ApplicationType | None, Query(alias="type")] = None,
+    status_filter: Annotated[ApplicationStatus | None, Query(alias="status")] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> OrderApplicationListResponse:
+    """我发布的订单收到的申请：可按类型 / 状态过滤，最新在前。"""
+    result = await fde_service.list_received_applications(
+        session,
+        publisher_id=principal.user_id,
+        type=type_filter,
+        status=status_filter,
+        page=page,
+        page_size=page_size,
+    )
+    return _application_list_response(result)
+
+
+@router.post(
+    "/applications/{application_id}/approve",
+    response_model=OrderApplicationResponse,
+)
+async def approve_application(
+    application_id: int,
+    request: Request,
+    principal: CurrentUserDep,
+    session: SessionDep,
+    payload: ApplicationReviewRequest | None = None,
+) -> OrderApplicationResponse:
+    """发布者（或管理员）通过申请；订单状态变化时广播 order.updated。"""
+    try:
+        result = await fde_service.approve_application(
+            session,
+            application_id=application_id,
+            actor_id=principal.user_id,
+            note=_note(payload),
+        )
+    except FdeError as exc:
+        raise _http_error(exc) from exc
+    if result.order_changed:
+        await _broadcast(
+            request,
+            "order.updated",
+            OrderAggregate(
+                order=result.record.application.order,
+                work_log_count=result.record.work_log_count,
+            ),
+        )
+    return _application_response(result.record)
+
+
+@router.post(
+    "/applications/{application_id}/reject",
+    response_model=OrderApplicationResponse,
+)
+async def reject_application(
+    application_id: int,
+    principal: CurrentUserDep,
+    session: SessionDep,
+    payload: ApplicationReviewRequest | None = None,
+) -> OrderApplicationResponse:
+    """发布者（或管理员）驳回申请：订单状态不变，不广播。"""
+    try:
+        result = await fde_service.reject_application(
+            session,
+            application_id=application_id,
+            actor_id=principal.user_id,
+            note=_note(payload),
+        )
+    except FdeError as exc:
+        raise _http_error(exc) from exc
+    return _application_response(result.record)
+
+
+@router.post(
+    "/applications/{application_id}/withdraw",
+    response_model=OrderApplicationResponse,
+)
+async def withdraw_application(
+    application_id: int,
+    principal: CurrentUserDep,
+    session: SessionDep,
+) -> OrderApplicationResponse:
+    """申请人本人撤回 pending 申请：订单状态不变，不广播。"""
+    try:
+        result = await fde_service.withdraw_application(
+            session, application_id=application_id, actor_id=principal.user_id
+        )
+    except FdeError as exc:
+        raise _http_error(exc) from exc
+    return _application_response(result.record)
 
 
 @router.websocket("/ws")

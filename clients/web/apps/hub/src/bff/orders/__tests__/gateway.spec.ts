@@ -4,7 +4,14 @@ import { request } from '@/lib/http'
 
 import { BffError } from '../../errors'
 import { HttpOrderGateway } from '../gateway'
-import { buildOrderDetailDto, buildOrderDto, buildOrderListDto, buildWorkLogDto } from './fixtures'
+import {
+  buildApplicationDto,
+  buildApplicationListDto,
+  buildOrderDetailDto,
+  buildOrderDto,
+  buildOrderListDto,
+  buildWorkLogDto,
+} from './fixtures'
 
 vi.mock('@/lib/http', () => ({ request: vi.fn() }))
 
@@ -80,6 +87,18 @@ describe('HttpOrderGateway', () => {
     expect(mockedRequest).toHaveBeenCalledWith('/fde/orders/mine', { token: 'token-1' })
   })
 
+  it('lists assigned orders through the dedicated endpoint', async () => {
+    mockedRequest.mockResolvedValueOnce(buildOrderListDto())
+
+    await gateway.listAssignedOrders('token-1', { status: 'in_progress' })
+
+    const query = queryOf(mockedRequest.mock.calls[0]?.[0] ?? '')
+    expect((mockedRequest.mock.calls[0]?.[0] ?? '').startsWith('/fde/orders/assigned?')).toBe(true)
+    expect(query.get('status')).toBe('in_progress')
+    expect(query.get('page')).toBe('1')
+    expect(query.get('page_size')).toBe('100')
+  })
+
   it('gets one order detail including logs', async () => {
     mockedRequest.mockResolvedValueOnce(buildOrderDetailDto())
 
@@ -113,19 +132,12 @@ describe('HttpOrderGateway', () => {
     })
   })
 
-  it('claims and completes orders through their action endpoints', async () => {
-    mockedRequest
-      .mockResolvedValueOnce(buildOrderDto())
-      .mockResolvedValueOnce(buildOrderDto({ status: 'completed' }))
+  it('cancels an order through its action endpoint', async () => {
+    mockedRequest.mockResolvedValueOnce(buildOrderDto({ status: 'cancelled' }))
 
-    await gateway.claimOrder('token-1', '5')
-    await gateway.completeOrder('token-1', '5')
+    await gateway.cancelOrder('token-1', '5')
 
-    expect(mockedRequest).toHaveBeenNthCalledWith(1, '/fde/orders/5/claim', {
-      method: 'POST',
-      token: 'token-1',
-    })
-    expect(mockedRequest).toHaveBeenNthCalledWith(2, '/fde/orders/5/complete', {
+    expect(mockedRequest).toHaveBeenCalledWith('/fde/orders/5/cancel', {
       method: 'POST',
       token: 'token-1',
     })
@@ -140,6 +152,81 @@ describe('HttpOrderGateway', () => {
       method: 'POST',
       token: 'token-1',
       body: { content: '完成首批标注', worked_hours: 6 },
+    })
+  })
+
+  it('applies for an order with type and optional message', async () => {
+    mockedRequest.mockResolvedValueOnce(buildApplicationDto())
+
+    const application = await gateway.applyForOrder('token-1', '5', {
+      type: 'accept',
+      message: '有相关行业经验',
+    })
+
+    expect(mockedRequest).toHaveBeenCalledWith('/fde/orders/5/applications', {
+      method: 'POST',
+      token: 'token-1',
+      body: { type: 'accept', message: '有相关行业经验' },
+    })
+    expect(application.id).toBe(1)
+  })
+
+  it('lists my applications with type/status/page params', async () => {
+    mockedRequest.mockResolvedValueOnce(buildApplicationListDto())
+
+    await gateway.listMyApplications('token-1', {
+      type: 'accept',
+      status: 'pending',
+      page: 2,
+      pageSize: 50,
+    })
+
+    const path = mockedRequest.mock.calls[0]?.[0] ?? ''
+    expect(path.startsWith('/fde/applications/mine?')).toBe(true)
+    const query = queryOf(path)
+    expect(query.get('type')).toBe('accept')
+    expect(query.get('status')).toBe('pending')
+    expect(query.get('page')).toBe('2')
+    expect(query.get('page_size')).toBe('50')
+  })
+
+  it('lists received applications with default pagination', async () => {
+    mockedRequest.mockResolvedValueOnce(buildApplicationListDto())
+
+    await gateway.listReceivedApplications('token-1', { status: 'all' })
+
+    const path = mockedRequest.mock.calls[0]?.[0] ?? ''
+    expect(path.startsWith('/fde/applications/received?')).toBe(true)
+    const query = queryOf(path)
+    expect(query.has('type')).toBe(false)
+    expect(query.has('status')).toBe(false)
+    expect(query.get('page')).toBe('1')
+    expect(query.get('page_size')).toBe('20')
+  })
+
+  it('approves, rejects and withdraws applications', async () => {
+    mockedRequest
+      .mockResolvedValueOnce(buildApplicationDto({ status: 'approved' }))
+      .mockResolvedValueOnce(buildApplicationDto({ status: 'rejected' }))
+      .mockResolvedValueOnce(buildApplicationDto({ status: 'withdrawn' }))
+
+    await gateway.approveApplication('token-1', '3', '请按说明交付')
+    await gateway.rejectApplication('token-1', '3')
+    await gateway.withdrawApplication('token-1', '3')
+
+    expect(mockedRequest).toHaveBeenNthCalledWith(1, '/fde/applications/3/approve', {
+      method: 'POST',
+      token: 'token-1',
+      body: { note: '请按说明交付' },
+    })
+    expect(mockedRequest).toHaveBeenNthCalledWith(2, '/fde/applications/3/reject', {
+      method: 'POST',
+      token: 'token-1',
+      body: {},
+    })
+    expect(mockedRequest).toHaveBeenNthCalledWith(3, '/fde/applications/3/withdraw', {
+      method: 'POST',
+      token: 'token-1',
     })
   })
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import CertificationMark from '@/components/identity/CertificationMark.vue'
 import UiChip from '@/components/ui/UiChip.vue'
 import type { FdeOrderView } from '@/models'
 
@@ -28,6 +29,8 @@ withDefaults(defineProps<OrderTableProps>(), {
       <thead>
         <tr>
           <th scope="col">任务</th>
+          <th scope="col">发布者</th>
+          <th scope="col">接单工程师</th>
           <th scope="col">行业</th>
           <th scope="col">交付周期</th>
           <th scope="col">价格</th>
@@ -35,6 +38,7 @@ withDefaults(defineProps<OrderTableProps>(), {
           <th v-if="showWorkLog" scope="col">工作日志</th>
           <th scope="col">托管</th>
           <th scope="col">发布时间</th>
+          <th v-if="$slots.actions" scope="col">操作</th>
         </tr>
       </thead>
       <tbody>
@@ -48,9 +52,21 @@ withDefaults(defineProps<OrderTableProps>(), {
             <p class="order-table__title">{{ order.title }}</p>
             <div class="order-table__meta">
               <span class="order-table__code">{{ order.code }}</span>
-              <span class="order-table__publisher">{{ order.publisherName }}</span>
               <UiChip v-if="order.publisherId === viewerId" variant="accent">我的发布</UiChip>
             </div>
+          </td>
+          <td class="order-table__cell">
+            <div class="order-table__party">
+              <span class="order-table__party-name">{{ order.publisherName }}</span>
+              <CertificationMark :certification="order.publisherCertification" />
+            </div>
+          </td>
+          <td class="order-table__cell">
+            <div v-if="order.engineerName" class="order-table__party">
+              <span class="order-table__party-name">{{ order.engineerName }}</span>
+              <CertificationMark :certification="order.engineerCertification" />
+            </div>
+            <span v-else class="order-table__hint">待接单</span>
           </td>
           <td class="order-table__cell">
             <span class="order-table__industry">{{ order.industry }}</span>
@@ -80,6 +96,11 @@ withDefaults(defineProps<OrderTableProps>(), {
               {{ order.publishedAtLabel }}
             </time>
           </td>
+          <td v-if="$slots.actions" class="order-table__cell order-table__cell--actions">
+            <div class="order-table__actions">
+              <slot name="actions" :order="order" />
+            </div>
+          </td>
         </tr>
       </tbody>
     </table>
@@ -94,7 +115,7 @@ withDefaults(defineProps<OrderTableProps>(), {
 
 .order-table {
   width: 100%;
-  min-width: 56rem;
+  min-width: 64rem;
   border-collapse: collapse;
   font-family: var(--font-family-sans);
   font-size: var(--font-size-small);
@@ -147,6 +168,10 @@ withDefaults(defineProps<OrderTableProps>(), {
   white-space: nowrap;
 }
 
+.order-table__cell--actions {
+  white-space: nowrap;
+}
+
 .order-table__title {
   color: var(--color-fg-strong);
   font-size: var(--font-size-small);
@@ -171,7 +196,14 @@ withDefaults(defineProps<OrderTableProps>(), {
   font-size: var(--font-size-code);
 }
 
-.order-table__publisher {
+.order-table__party {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--primitive-space-2);
+}
+
+.order-table__party-name {
   overflow-wrap: anywhere;
 }
 
@@ -209,6 +241,13 @@ withDefaults(defineProps<OrderTableProps>(), {
   color: var(--color-fg-strong);
   font-variant-numeric: tabular-nums;
   font-weight: var(--font-weight-medium);
+}
+
+.order-table__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--primitive-space-2);
 }
 
 .order-table__time {
