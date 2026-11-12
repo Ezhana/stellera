@@ -1,0 +1,25 @@
+services:
+  litellm:
+    image: ${LITELLM_IMAGE:-docker.litellm.ai/berriai/litellm:latest}
+    container_name: litellm
+    restart: always
+    command: ["--config", "/app/config.yaml"]
+    ports:
+      - "${LITELLM_BIND:-}${LITELLM_PORT:-4000}:4000"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    env_file: ./.env
+    environment:
+      STORE_MODEL_IN_DB: "True"
+      TZ: ${TZ:-Asia/Shanghai}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      postgres-provision:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s

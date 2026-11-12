@@ -1,19 +1,15 @@
+name: ${COMPOSE_PROJECT_NAME:-stellera}
+
 include:
   - ./postgres/compose.yaml
+  - ./redis/compose.yaml
+  # LLM Gateway
   - ./new-api/compose.yaml
+  - ./litellm/compose.yaml
+  # --profile observability
+  - ./monitoring/prometheus/compose.yaml
+  - ./monitoring/grafana/compose.yaml
 
-services:
-  redis:
-    image: ${REDIS_IMAGE:-redis:latest}
-    restart: always
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    environment:
-      TZ: ${TZ:-UTC}
-    command: >-
-      redis-server
-      --requirepass ${REDIS_PASSWORD:-redis}
-      --save ${REDIS_SAVE:-""}
-      --appendonly ${REDIS_APPENDONLY:-no}
-      --maxmemory ${REDIS_MAXMEMORY:-1gb}
-      --maxmemory-policy ${REDIS_MAXMEMORY_POLICY:-allkeys-lru}
+networks:
+  default:
+    name: ${DOCKER_NETWORK:-stellera}

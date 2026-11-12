@@ -1,0 +1,34 @@
+# Grafana（可选观测组件：额外启用 observability profile 才会启动）。
+#
+# - 数据源与 dashboard 走 provisioning 自动加载：
+#     ./provisioning/datasource/prometheus.yml  -> http://prometheus:9090
+#     ./provisioning/dashboards/dashboards.yml  -> /var/lib/grafana/dashboards
+# - Grafana 自身数据存 PostgreSQL（grafana 库/账号由 postgres-provision job 创建），
+#   数据库密码通过 compose secret 以 Grafana 的 file provider 读取，不落 env。
+services:
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:latest}
+    container_name: grafana
+    restart: always
+    profiles: ["observability"]
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    env_file: ./.env
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # $$ 由 compose 转义为字面量 $，由 Grafana 的 file provider 在启动时读取
+      GF_DATABASE_PASSWORD: $$__file{/run/secrets/grafana_db_password}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./provisioning:/etc/grafana/provisioning:ro
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+    secrets:
+      - grafana_db_password
+    depends_on:
+      postgres-provision:
+        condition: service_completed_successfully
+      prometheus:
+        condition: service_started
+
+volumes:
+  grafana_data:

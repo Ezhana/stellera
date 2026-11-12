@@ -8,8 +8,9 @@
 | `hub`（web） | `clients/web` | pnpm workspace（Node 24） | Vue 3 + Vite 前端工作区，应用在 `apps/hub`（Obsidian 黑金 FDE 交付控制台：平台简介 + 实时订单大厅 + 钱包 + 个人信息/认证 + 管理后台，含 BFF/页面模型层） |
 | `hub-api` | `services/hub-api` | uv（Python 3.13） | FastAPI + PostgreSQL，Authlib JWT 登录、pycasbin RBAC、FDE 订单/实时推送、个人资料/认证、钱包与管理后台 |
 
-`infra/` 提供本地依赖（PostgreSQL、Redis、new-api）；`deploy/` 是单机发布编排：include `infra/`，
-再追加 `hub-api` 与 `web` 两个应用镜像。
+`infra/` 提供本地依赖（PostgreSQL、Redis、new-api / litellm 两个可切换的 LLM 网关；Prometheus + Grafana
+为可选观测栈），环境变量与编排约定见 [`infra/README.md`](infra/README.md)；`deploy/` 是单机发布编排：
+include `infra/`，再追加 `hub-api` 与 `web` 两个应用镜像。
 
 ## 一键启动（Docker）
 
@@ -17,11 +18,22 @@
 
 ```bash
 cp deploy/.env.example deploy/.env
-just gen-secret 16        # 生成 POSTGRES_PASSWORD，填进 deploy/.env
+cp infra/.env.example infra/.env                    # 共享配置 + 默认网关 profile
+cp infra/postgres/.env.example infra/postgres/.env  # 数据库管理员账号
+cp infra/redis/.env.example infra/redis/.env
+cp infra/new-api/.env.example infra/new-api/.env    # 默认网关 new-api；改用 litellm 见下文
+# 应用数据库密码 secret（postgres-provision job 读取，模板 -> 真实文件）
+for f in infra/postgres/secrets/*.example; do cp "$f" "${f%.example}"; done
+just gen-secret 16        # 生成 postgres 管理员密码，填进 infra/postgres/.env 的 POSTGRES_PASSWORD
 just gen-secret 32        # 生成 JWT_SECRET，填进 deploy/.env
+# 按需把 infra/postgres/secrets/ 下的密码换成随机值，并同步到各应用 .env 的连接串
 just up                   # 构建 hub-api / web 镜像并后台启动全部服务
 just ps
 ```
+
+网关二选一：默认 `COMPOSE_PROFILES=new-api`；要换成 LiteLLM 时，
+`cp infra/litellm/.env.example infra/litellm/.env` 并把两个网关的 `.env`/`deploy/.env` 里的
+`COMPOSE_PROFILES` 都改成 `litellm`。
 
 需要演示账号与订单时，把 `deploy/.env` 的 `INIT_ARGS` 设为 `--demo` 后重新 `just up`：会额外写入
 `member / enterprise / engineer` 演示账号、10 条 FDE 演示订单、钱包余额/流水、3 个演示兑换码，
@@ -42,7 +54,10 @@ just ps
 | <http://localhost:8080/profiles/:id> | 他人公开主页（登录后可看） |
 | <http://localhost:8080/wallet> | 钱包（余额、用量、充值记录、兑换码） |
 | <http://localhost:8080/admin/users> | 管理后台（仅 admin：用户 / 认证审核 / 兑换码 / 系统设置） |
-| <http://localhost:3000> | new-api 控制台 |
+| <http://localhost:3000> | new-api 控制台（网关 profile 为 `new-api` 时） |
+| <http://localhost:4000/ui> | LiteLLM 网关 Admin UI（网关 profile 为 `litellm` 时；用户名 `admin`，密码为 `infra/litellm/.env` 的 `LITELLM_MASTER_KEY`） |
+| <http://localhost:9090> | Prometheus（额外启用 `observability` profile 时） |
+| <http://localhost:3001> | Grafana（额外启用 `observability` profile 时，默认 admin / admin） |
 
 管理员账号默认 `admin` / `admin12345`（`deploy/.env` 的 `ADMIN_*` 可改），只适合本机与测试环境。
 
@@ -55,8 +70,12 @@ just ps
 ```bash
 git pull
 cp deploy/.env.example deploy/.env
-just gen-secret 16        # POSTGRES_PASSWORD
-just gen-secret 32        # JWT_SECRET
+cp infra/postgres/.env.example infra/postgres/.env  # 首次部署
+cp infra/redis/.env.example infra/redis/.env
+cp infra/new-api/.env.example infra/new-api/.env    # 或 infra/litellm/.env.example，二选一
+for f in infra/postgres/secrets/*.example; do cp "$f" "${f%.example}"; done
+just gen-secret 16        # postgres 管理员密码 -> infra/postgres/.env
+just gen-secret 32        # JWT_SECRET -> deploy/.env
 # 按需改 deploy/.env 的 WEB_PORT / CORS_ORIGINS / INIT_ARGS / 镜像与包源
 just up
 just ps
@@ -73,6 +92,70 @@ just down                   # 停止并删除容器（数据卷保留）
 
 默认入口 `http://<测试机>:8080`；PostgreSQL 数据在 compose 卷 `postgres_data`，
 new-api 数据在 `infra/new-api/data`。
+
+## LLM 网关与观测
+
+`infra/` 下每个依赖都是独立子项目：`postgres/`、`redis/`、`new-api/`、`litellm/`、`monitoring/`，
+各自维护 `compose.yaml` 和 `.env`（模板为 `.env.example`），由 `infra/compose.yaml` 通过 `include`
+统一编排；根目录 `infra/.env` 只放共享配置（`TZ`、`DOCKER_NETWORK`、默认网关 `COMPOSE_PROFILES`）。
+变量职责划分与验证要求见 [`infra/README.md`](infra/README.md)。
+
+### 网关二选一（new-api / litellm）
+
+两个网关都作为 LLM 网关使用，各自有独立的数据库和独立账号（由 `postgres-provision` 一次性 job
+通过 compose secret 创建/同步，见下文），连接串写在各自 `.env`：
+
+- `infra/new-api/.env`：`SQL_DSN`（PostgreSQL 连接串）、`REDIS_CONN_STRING`、`SESSION_SECRET`；
+- `infra/litellm/.env`：`DATABASE_URL`（PostgreSQL 连接串）、`LITELLM_MASTER_KEY`、`LITELLM_SALT_KEY`。
+
+数据库密码以 `infra/postgres/secrets/*_db_password` secret 文件为唯一来源（模板为 `*.example`，
+不会提交），各应用 `.env` 的连接串密码必须与之保持一致；细节见
+[`infra/postgres/secrets/README.md`](infra/postgres/secrets/README.md)。
+
+选择哪个网关由 `COMPOSE_PROFILES` 决定（`infra/.env` 是本地默认，`deploy/.env` 是部署默认）：
+
+```bash
+# 默认 new-api（两处 env 的 COMPOSE_PROFILES=new-api）
+docker compose -f infra/compose.yaml up -d
+
+# 切换到 litellm：先停掉当前栈，再指定 profile 启动
+docker compose -f infra/compose.yaml down
+COMPOSE_PROFILES=litellm docker compose -f infra/compose.yaml up -d
+# 或者把 infra/.env / deploy/.env 的 COMPOSE_PROFILES 改成 litellm 后正常 up
+```
+
+命令行 `--profile` 会**替换**（而不是追加）`COMPOSE_PROFILES`，同时开网关和观测栈时要写多个
+`--profile`，或用 `COMPOSE_PROFILES=litellm,observability` 这类逗号列表。
+
+- new-api：<http://localhost:3000>，模型/密钥在控制台管理；
+- LiteLLM：<http://localhost:4000>，Admin UI 在 `/ui`（用户名 `admin`，密码为 `LITELLM_MASTER_KEY`），
+  模型写入数据库（`STORE_MODEL_IN_DB=True`），provider key 不落仓库；
+- 数据库由 `postgres-provision` 一次性 job 幂等创建/同步（每次 `up` 自动执行）；已有旧数据卷也可手动触发：
+
+  ```bash
+  docker compose -f infra/compose.yaml up -d postgres postgres-provision
+  ```
+
+### 观测栈（可选预留）
+
+```bash
+cp infra/monitoring/prometheus/.env.example infra/monitoring/prometheus/.env
+cp infra/monitoring/grafana/.env.example infra/monitoring/grafana/.env
+# new-api 网关 + 观测
+COMPOSE_PROFILES=new-api,observability docker compose -f infra/compose.yaml up -d
+# litellm 网关 + 观测
+COMPOSE_PROFILES=litellm,observability docker compose -f infra/compose.yaml up -d
+```
+
+- Prometheus <http://localhost:9090> 抓取 `litellm:4000/metrics`；LiteLLM 自 v1.85.0 起该端点要求
+  Bearer 鉴权，`infra/monitoring/prometheus/.env` 的 `LITELLM_METRICS_TOKEN` 需与
+  `infra/litellm/.env` 的 `LITELLM_MASTER_KEY` 一致（使用 new-api 网关时没有 litellm 指标可抓）；
+- Grafana <http://localhost:3001> 已通过 provisioning 接好 Prometheus 数据源；Grafana 自身数据存
+  PostgreSQL 的 `grafana` 库（账号/库由 `postgres-provision` job 创建，密码来自
+  `infra/postgres/secrets/grafana_db_password`）；把 LiteLLM 官方 dashboard 的 JSON 放进
+  `infra/monitoring/grafana/dashboards/` 会自动加载；
+- 发布工程同样适用：
+  `COMPOSE_PROFILES=litellm,observability docker compose -f deploy/compose.yaml --env-file deploy/.env up -d`。
 
 ## FDE 订单模块
 
@@ -142,10 +225,14 @@ new-api 数据在 `infra/new-api/data`。
 
 ```bash
 cp infra/.env.example infra/.env
-docker compose -f infra/compose.yaml up -d    # PostgreSQL（new-api、hub 库）+ Redis + new-api
+cp infra/postgres/.env.example infra/postgres/.env
+cp infra/redis/.env.example infra/redis/.env
+cp infra/new-api/.env.example infra/new-api/.env  # 默认网关；改用 litellm 见「LLM 网关与观测」
+for f in infra/postgres/secrets/*.example; do cp "$f" "${f%.example}"; done
+docker compose -f infra/compose.yaml up -d    # PostgreSQL + postgres-provision job + Redis + 网关
 
 cd services/hub-api
-cp .env.example .env          # DATABASE_URL 改成 infra/.env 里的用户/密码（默认 stellera / stellera）
+cp .env.example .env          # 默认 DATABASE_URL 使用 hub 账号（密码与 secrets/hub_db_password 一致）
 uv sync
 uv run python -m app.scripts.init --demo
 ```
@@ -195,7 +282,7 @@ just gen-secret [bytes]     # 生成随机十六进制密钥（默认 32 字节�
 justfile                      # 根编排入口（薄壳转发，无业务逻辑）
 clients/web/                  # 前端工作区：apps/hub、共享 ESLint/Prettier 配置、通用 Dockerfile
 services/hub-api/             # 后端服务：app/、casbin/、migrations/、tests/
-infra/                        # 本地依赖编排：postgres/、redis、new-api/
+infra/                        # 本地依赖编排：postgres/（含 provisioning/、secrets/）、redis/、new-api/、litellm/、monitoring/（可选观测）
 deploy/                       # 发布编排：compose.yaml（include infra + hub-api/web）与 .env.example
 docs/adr/                     # 架构决策记录（0001 登录与 RBAC、0002 前端 BFF/页面模型、0003 FDE 订单、0004 钱包与管理后台、0005 角色与订单申请、0006 个人信息与认证）
 tools/                        # 仓库级维护工具（gen-api 等，按需创建）

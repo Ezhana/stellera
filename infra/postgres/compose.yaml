@@ -1,18 +1,17 @@
+x-pg-image: &pg-image
+  image: ${POSTGRES_IMAGE:-postgres:18}
+
 services:
   postgres:
-    image: ${POSTGRES_IMAGE:-postgres:18}
+    <<: *pg-image
     restart: always
+    env_file: ./.env
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-stellera}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stellera}
-      POSTGRES_DB: ${POSTGRES_DB:-stellera}
-      POSTGRES_DBS: ${POSTGRES_DBS:-}
-      TZ: ${TZ:-UTC}
+      TZ: ${TZ:-Asia/Shanghai}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
-      - ./init-scripts:/docker-entrypoint-initdb.d
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}" ]
       interval: 5s
@@ -20,5 +19,41 @@ services:
       retries: 10
       start_period: 5s
 
+  postgres-provision:
+    <<: *pg-image
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/provisioning/provision.sh"]
+    environment:
+      PGHOST: postgres
+      PGPORT: ${POSTGRES_PORT:-5432}
+      PGUSER: ${POSTGRES_USER:?POSTGRES_USER 未设置，见 infra/postgres/.env.example}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 未设置，见 infra/postgres/.env.example}
+      PGDATABASE: ${POSTGRES_DB:-stellera}
+      # 各应用数据库账号名（需与各应用 .env 的 DSN 保持一致）
+      LITELLM_DB_USER: litellm
+      NEW_API_DB_USER: new-api
+      GRAFANA_DB_USER: grafana
+      HUB_DB_USER: hub
+    volumes:
+      - ./provisioning:/provisioning:ro
+    secrets:
+      - litellm_db_password
+      - new_api_db_password
+      - grafana_db_password
+      - hub_db_password
+
 volumes:
   postgres_data:
+
+secrets:
+  litellm_db_password:
+    file: ./secrets/litellm_db_password
+  new_api_db_password:
+    file: ./secrets/new_api_db_password
+  grafana_db_password:
+    file: ./secrets/grafana_db_password
+  hub_db_password:
+    file: ./secrets/hub_db_password

@@ -1,0 +1,32 @@
+# Prometheus（可选观测组件：额外启用 observability profile 才会启动）。
+#
+# 抓取对象是 infra/litellm 的网关；LiteLLM 自 v1.85.0 起 /metrics 默认要求
+# Bearer token，这里通过 compose secret 把 token 提供给 prometheus.yaml。
+# 使用 new-api 网关时没有 litellm 指标可抓，需要同时启用 litellm profile。
+services:
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:latest}
+    container_name: prometheus
+    restart: always
+    profiles: ["observability"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yaml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+      - --web.enable-lifecycle
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - prometheus_data:/prometheus
+    secrets:
+      - litellm_metrics_token
+
+volumes:
+  prometheus_data:
+
+secrets:
+  # 值来自 infra/monitoring/prometheus/.env 的 LITELLM_METRICS_TOKEN
+  # （需与 infra/litellm/.env 的 LITELLM_MASTER_KEY 一致）。
+  litellm_metrics_token:
+    environment: LITELLM_METRICS_TOKEN

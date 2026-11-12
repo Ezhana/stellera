@@ -15,7 +15,7 @@ x-api-build: &api-build
 x-api-environment: &api-environment
   APP_ENV: ${APP_ENV:-staging}
   DOCS_ENABLED: ${DOCS_ENABLED:-false}
-  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-stellera}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 未设置}@postgres:5432/hub
+  DATABASE_URL: ${HUB_DATABASE_URL:?HUB_DATABASE_URL 未设置}
   JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 未设置}
   JWT_ISSUER: ${JWT_ISSUER:-stellera-hub}
   JWT_AUDIENCE: ${JWT_AUDIENCE:-stellera-hub-web}
@@ -51,6 +51,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      postgres-provision:
+        condition: service_completed_successfully
     restart: "no"
 
   web:
